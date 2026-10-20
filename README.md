@@ -40,6 +40,10 @@ shell 権限(uid 2000)のプロセスが `CAPTURE_AUDIO_OUTPUT` を使って `RE
 - 体感は「前より良いがまだ気になる」。残りは Android 側の取得遅延、Mac 中継(Wi-Fi 2 往復)、AirMac 内部バッファの可能性
 - 端末単体アプリにすれば Mac 中継が不要になる
 
+## Android アプリ(2026-10-20、動作確認済み)
+`android/` に Android TV アプリを作成。プロジェクター単体で「再生音の取得 → AirMac Express へ送信」まで動き、
+Mac 経由より遅延が減ったことを確認した。詳細は [android/README.md](android/README.md)。
+
 ## 次のステップ
 1. (済) Mac から AirMac Express へ PCM を RAOP 送信するテスト(libraop)
 2. キャプチャ用プロセス(Java, app_process)

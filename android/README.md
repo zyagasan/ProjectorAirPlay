@@ -1,0 +1,32 @@
+# AirPlay Mirror (Android TV / Google TV アプリ)
+
+プロジェクター(FORMOVIE / Xiaomi L1 Pro, Android 14)の再生音を、AirPlay 1(RAOP)機器へ送る。
+Mac を介さず、プロジェクター単体で動く。
+
+```
+adb(localhost:5555) ─▶ scrcpy-server(shell 権限で再生音を取得, PCM 48kHz)
+   ─▶ リサンプル 44.1kHz ─▶ PcmQueue(溜まりすぎたら古い音を捨てる) ─▶ libraop(RAOP, JNI) ─▶ AirPlay 機器
+```
+
+## 前提
+- 端末側で adb が TCP 5555 で待ち受けていること(`adb tcpip 5555`)。初回起動時にプロジェクターの画面に
+  「USB デバッグを許可しますか?」が出るので「常に許可」で許可する(アプリが生成した RSA キーを登録する操作)。
+- 送信先は mDNS(`_raop._tcp`)で自動検出。暗号化なし・パスワードなしの AirPlay 1 機器(AirMac Express で確認)。
+
+## ビルド
+```
+scripts/build-libraop-mac.sh      # third_party/libraop を取得してパッチを当てる(Android 用にも必要)
+cd android
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17
+./gradlew :app:assembleDebug
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+ビルド環境: JDK 17 / Android SDK 34 / NDK 26.3 / CMake 3.22(Homebrew の android-commandlinetools)。
+
+## 設計メモ
+- 音声取得は同梱の scrcpy-server(Apache-2.0, `app/src/main/assets/scrcpy-server.jar`, v5.0.1)を shell 権限で起動して使う。
+  `audio_codec=raw`, `send_*_meta=false` で生の PCM をそのまま受け取る。
+- **最初の音が届いてから AirPlay に接続する**(接続後に無音期間があると、最初の音が遅れて捨てられて無音になる)。
+- RAOP 遅延は 200ms(`RAOP_LATENCY_MIN=4410` + `-l 4410`)。AirMac Express で途切れなく再生できた。
+- RAOP 音量の上限は 50(100 は大きすぎる)。
+- libraop の OpenSSL 依存は `ssl_stubs.c` で代替(乱数だけ実装。AppleTV ペアリング・パスワード・RSA 暗号化は未対応)。
