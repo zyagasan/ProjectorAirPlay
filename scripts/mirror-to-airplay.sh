@@ -7,5 +7,5 @@ DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FIFO=$(mktemp -u /tmp/capfifo.XXXXXX); mkfifo "$FIFO"
 trap 'kill $(jobs -p) 2>/dev/null; rm -f "$FIFO"' EXIT
 scrcpy --no-video --no-playback --audio-source=${SRC:-output} --audio-codec=raw --time-limit="$SEC" --record="$FIFO" --record-format=wav >/dev/null 2>&1 &
-ffmpeg -loglevel error -fflags nobuffer -flags low_delay -probesize 32 -analyzeduration 0 -i "$FIFO" ${GAIN:+-af volume=$GAIN} -f s16le -ar 44100 -ac 2 - | tee ${TEE:-/dev/null} \
- | DYLD_LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib "$DIR/third_party/libraop/bin/cliraop-macos-arm64" -p 7000 -t 4 -v $(( ${VOL:-40} > 50 ? 50 : ${VOL:-40} )) -d 3 "$IP" -
+ffmpeg -loglevel error -fflags nobuffer -flags low_delay -flush_packets 1 -probesize 32 -analyzeduration 0 -i "$FIFO" ${GAIN:+-af volume=$GAIN} -f s16le -ar 44100 -ac 2 - | tee ${TEE:-/dev/null} \
+ | DYLD_LIBRARY_PATH=/opt/homebrew/opt/openssl@3/lib "$DIR/third_party/libraop/bin/cliraop-macos-arm64" -p 7000 -t 4 -l ${LAT:-8820} -v $(( ${VOL:-40} > 50 ? 50 : ${VOL:-40} )) -d 3 "$IP" -

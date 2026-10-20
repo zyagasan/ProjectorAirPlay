@@ -1,8 +1,16 @@
 diff --git a/src/cliraop.c b/src/cliraop.c
-index a827790..d9e465d 100644
+index a827790..00d8415 100644
 --- a/src/cliraop.c
 +++ b/src/cliraop.c
-@@ -195,6 +195,7 @@ int main(int argc, char *argv[]) {
+@@ -8,6 +8,7 @@
+  *
+  */
+ 
++#include <sys/ioctl.h>
+ #include <stdio.h>
+ #include <signal.h>
+ #include <fcntl.h>
+@@ -195,6 +196,7 @@ int main(int argc, char *argv[]) {
  			port=atoi(argv[++i]);
  		} else if (!strcmp(argv[i],"-v")) {
  			volume=atoi(argv[++i]);
@@ -10,7 +18,7 @@ index a827790..d9e465d 100644
  		} else if (!strcmp(argv[i],"-w")) {
  			wait=atoi(argv[++i]);
  		} else if(!strcmp(argv[i],"-l")) {
-@@ -206,9 +207,9 @@ int main(int argc, char *argv[]) {
+@@ -206,9 +208,9 @@ int main(int argc, char *argv[]) {
  		} else if (!strcmp(argv[i],"-m")) {
  			md = argv[++i];
  		} else if (!strcmp(argv[i], "-o")) {
@@ -22,7 +30,7 @@ index a827790..d9e465d 100644
  		} else if (!strcmp(argv[i], "-u")) {
  			auth = true;
  		} else if (!strcmp(argv[i],"-a")) {
-@@ -270,6 +271,22 @@ int main(int argc, char *argv[]) {
+@@ -270,6 +272,36 @@ int main(int argc, char *argv[]) {
  
  	init_platform(interactive);
  
@@ -40,12 +48,26 @@ index a827790..d9e465d 100644
 +		}
 +		first_n = (int) got;
 +		if (!first_n) { free(first); close_platform(interactive); return 0; }
++
++		// the source queues audio while it starts up and then delivers it in a burst; that backlog
++		// would stay as permanent extra latency, so discard whatever is already waiting (max ~1.5s)
++		{
++			uint8_t trash[4096];
++			uint64_t t0 = raopcl_get_ntp(NULL);
++			int avail = 0, dropped = 0;
++			while (NTP2MS(raopcl_get_ntp(NULL) - t0) < 1500 && ioctl(infile, FIONREAD, &avail) == 0 && avail > 0) {
++				ssize_t r = read(infile, trash, avail < (int) sizeof(trash) ? avail : (int) sizeof(trash));
++				if (r <= 0) break;
++				dropped += (int) r;
++			}
++			LOG_INFO("discarded %d bytes of startup backlog (%d ms)", dropped, dropped / 4 * 1000 / 44100);
++		}
 +	}
 +
  	// if required, pair with appleTV
  	if (pairing) AppleTVpairing(NULL, NULL, &secret);
  	
-@@ -337,7 +354,23 @@ int main(int argc, char *argv[]) {
+@@ -337,7 +369,23 @@ int main(int argc, char *argv[]) {
  		}
  
  		if (status == PLAYING && raopcl_accept_frames(raopcl)) {
@@ -70,3 +92,17 @@ index a827790..d9e465d 100644
  			if (!n)	continue;
  			raopcl_send_chunk(raopcl, buf, n / 4, &playtime);
  			frames += n / 4;
+diff --git a/src/raop_client.h b/src/raop_client.h
+index c7908dc..882dedb 100644
+--- a/src/raop_client.h
++++ b/src/raop_client.h
+@@ -64,7 +64,9 @@
+ 
+ #define DEFAULT_FRAMES_PER_CHUNK 352
+ #define MAX_FRAMES_PER_CHUNK 4096 // must match alac_wrapper.h ALAC_MAX_FRAMES
++#ifndef RAOP_LATENCY_MIN
+ #define RAOP_LATENCY_MIN 11025
++#endif
+ #define SECRET_SIZE	64
+ 
+ typedef struct ntp_s {

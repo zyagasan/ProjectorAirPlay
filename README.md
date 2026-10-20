@@ -33,6 +33,13 @@ shell 権限(uid 2000)のプロセスが `CAPTURE_AUDIO_OUTPUT` を使って `RE
 - stdin 入力では **最初の音を受け取ってから RAOP 接続する**必要あり(接続後に無音期間があると、音が遅れて捨てられ無音になる)。パッチで対応
 - パイプで 1 回の read が短いと音が途切れるため、1 チャンク分読み切るようにパッチ済み
 
+## 遅延の短縮(2026-10-20)
+- RAOP 側: 既定 約1250ms → `RAOP_LATENCY_MIN=4410` + `-l 4410` で **199ms**(AirMac Express は受け付ける。途切れなし)
+- 起動時にたまった音(スクリプト起動〜最初の読み取りの間)を cliraop が捨てる(これが残ると恒久的な遅延になる)
+- ffmpeg 出力を `-flush_packets 1` で即時送出
+- 体感は「前より良いがまだ気になる」。残りは Android 側の取得遅延、Mac 中継(Wi-Fi 2 往復)、AirMac 内部バッファの可能性
+- 端末単体アプリにすれば Mac 中継が不要になる
+
 ## 次のステップ
 1. (済) Mac から AirMac Express へ PCM を RAOP 送信するテスト(libraop)
 2. キャプチャ用プロセス(Java, app_process)
