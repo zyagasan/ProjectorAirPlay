@@ -23,6 +23,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 ビルド環境: JDK 17 / Android SDK 34 / NDK 26.3 / CMake 3.22(Homebrew の android-commandlinetools)。
 
+## 使い方
+- 起動すると、前回の送信先が見つかり次第、自動で送信を開始する(「起動時に自動開始」で切り替え)。
+- 状態は右上のランプで確認: 緑=送信中 / 黄=接続中 / 赤=失敗 / 灰=停止中。失敗時は最大 5 回まで自動で再接続する。
+- 音量は送信中でも変更できる(再接続なし。上限 50)。
+- 起動から再生開始まで約 4 秒(音声取得サーバー(jar)は端末に同じサイズのものがあれば転送しない。転送は約 9 秒かかる)。
+
 ## 設計メモ
 - 音声取得は同梱の scrcpy-server(Apache-2.0, `app/src/main/assets/scrcpy-server.jar`, v5.0.1)を shell 権限で起動して使う。
   `audio_codec=raw`, `send_*_meta=false` で生の PCM をそのまま受け取る。

@@ -12,4 +12,5 @@ object RaopNative {
     external fun requestStop(handle: Long)
     external fun close(handle: Long)
     external fun latencyMs(handle: Long): Int
+    external fun setVolume(handle: Long, volume: Int)
 }

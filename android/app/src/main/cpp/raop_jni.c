@@ -100,3 +100,9 @@ Java_com_zyagasan_projectorairplay_RaopNative_latencyMs(JNIEnv *env, jobject thi
     if (!c || !c->cl) return 0;
     return (jint)(raopcl_latency(c->cl) * 1000 / 44100);
 }
+
+JNIEXPORT void JNICALL
+Java_com_zyagasan_projectorairplay_RaopNative_setVolume(JNIEnv *env, jobject thiz, jlong handle, jint volume) {
+    ctx_t *c = (ctx_t *)(intptr_t) handle;
+    if (c && c->cl) raopcl_set_volume(c->cl, raopcl_float_volume(volume));
+}
