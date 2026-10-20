@@ -17,8 +17,16 @@ shell 権限(uid 2000)のプロセスが `CAPTURE_AUDIO_OUTPUT` を使って `RE
 - 端末 ABI は armeabi-v7a(32bit)。NDK ビルドは v7a 必須
 - AirPlay 機器は mDNS `_raop._tcp` で検出できる(`メインスピーカー`)
 
+## Mac -> AirMac Express の RAOP 送信(確認済み 2026-10-20)
+`scripts/build-libraop-mac.sh` でビルドし、`scripts/send-test-tone.sh` でテスト音を送る。実機で再生を確認した。
+つまずき点:
+- AirMac Express は **port 7000**(cliraop の既定は 5000)。`-p 7000` が必要
+- `-t 4`(MFi, et=4)が必要。cliraop は `-t` の値を `am` に入れていたため修正(`patches/`)
+- macOS 標準の libcrypto だと abort する。`DYLD_LIBRARY_PATH` で Homebrew の openssl@3 を指定
+- `-v 20` + 小さい振幅だと聞こえないほど小さい。`-v 60` で確認できた。遅延は約1.25秒
+
 ## 次のステップ
-1. Mac から AirMac Express へ PCM を RAOP 送信するテスト(libraop)
+1. (済) Mac から AirMac Express へ PCM を RAOP 送信するテスト(libraop)
 2. キャプチャ用プロセス(Java, app_process)
 3. Android アプリ(Kotlin, mDNS 検索, Leanback UI, adb 接続)
 

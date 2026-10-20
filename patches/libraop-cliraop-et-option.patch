@@ -1,0 +1,16 @@
+diff --git a/src/cliraop.c b/src/cliraop.c
+index a827790..db67e7e 100644
+--- a/src/cliraop.c
++++ b/src/cliraop.c
+@@ -206,9 +206,9 @@ int main(int argc, char *argv[]) {
+ 		} else if (!strcmp(argv[i],"-m")) {
+ 			md = argv[++i];
+ 		} else if (!strcmp(argv[i], "-o")) {
+-			md = argv[++i];
+-		} else if(!strcmp(argv[i],"-t")) {
+ 			am = argv[++i];
++		} else if(!strcmp(argv[i],"-t")) {
++			et = argv[++i];
+ 		} else if (!strcmp(argv[i], "-u")) {
+ 			auth = true;
+ 		} else if (!strcmp(argv[i],"-a")) {
