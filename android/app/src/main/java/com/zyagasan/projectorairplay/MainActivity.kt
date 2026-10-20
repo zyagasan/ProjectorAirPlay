@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private var selected: Target? = null
     private var volume = 40
     private var autoStart = true
+    private var autoBoot = true
     private var autoStartPending = false
     private var showLog = false
 
@@ -43,6 +44,7 @@ class MainActivity : Activity() {
     private lateinit var toggle: Button
     private lateinit var volumeText: TextView
     private lateinit var autoBtn: Button
+    private lateinit var bootBtn: Button
     private lateinit var logBtn: Button
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
@@ -53,6 +55,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         volume = prefs.getInt("volume", 40).coerceIn(0, MirrorSession.MAX_VOLUME)
         autoStart = prefs.getBoolean("auto", true)
+        autoBoot = prefs.getBoolean("boot", true)
         autoStartPending = autoStart && savedInstanceState == null && !MirrorState.running
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         buildUi()
@@ -177,7 +180,13 @@ class MainActivity : Activity() {
             prefs.edit().putBoolean("auto", autoStart).apply()
             refresh()
         }
-        opts.addView(autoBtn, LinearLayout.LayoutParams(dp(360), dp(56)).apply { rightMargin = dp(16) })
+        opts.addView(autoBtn, LinearLayout.LayoutParams(dp(340), dp(56)).apply { rightMargin = dp(16) })
+        bootBtn = button("", 20f) {
+            autoBoot = !autoBoot
+            prefs.edit().putBoolean("boot", autoBoot).apply()
+            refresh()
+        }
+        opts.addView(bootBtn, LinearLayout.LayoutParams(dp(420), dp(56)).apply { rightMargin = dp(16) })
         logBtn = button("", 20f) { showLog = !showLog; refresh() }
         opts.addView(logBtn, LinearLayout.LayoutParams(dp(220), dp(56)))
         root.addView(opts, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
@@ -227,7 +236,8 @@ class MainActivity : Activity() {
         toggle.isEnabled = MirrorState.running || selected != null
         toggle.alpha = if (toggle.isEnabled) 1f else 0.45f
         volumeText.text = "AirPlay 音量  $volume"
-        autoBtn.text = "起動時に自動開始: " + if (autoStart) "オン" else "オフ"
+        autoBtn.text = "アプリ起動時に自動開始: " + if (autoStart) "オン" else "オフ"
+        bootBtn.text = "電源オン時に自動起動: " + if (autoBoot) "オン" else "オフ"
         logBtn.text = if (showLog) "ログを隠す" else "ログを表示"
         logScroll.visibility = if (showLog) View.VISIBLE else View.GONE
         if (showLog) {

@@ -13,6 +13,8 @@ import android.os.Looper
 
 /** 画面を閉じても動き続けるための前面サービス。状態は MirrorState に出す。 */
 class MirrorService : Service() {
+    private var discovery: RaopDiscovery? = null
+    private var maxRetries = MAX_RETRIES
     private var session: MirrorSession? = null
     private var request: Intent? = null
     private var retries = 0
@@ -24,6 +26,7 @@ class MirrorService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> stopAll()
+            ACTION_BOOT -> bootStart()
             ACTION_VOLUME -> session?.setVolume(intent.getIntExtra("volume", 40))
             else -> if (intent != null) startSession(intent, resetRetries = true)
         }
@@ -40,14 +43,10 @@ class MirrorService : Service() {
         )
         val volume = i.getIntExtra("volume", 40)
 
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        nm.createNotificationChannel(NotificationChannel(CHANNEL, "AirPlay 送信", NotificationManager.IMPORTANCE_LOW))
-        val n = Notification.Builder(this, CHANNEL)
-            .setContentTitle("AirPlay に送信中")
-            .setContentText(target.displayName)
-            .setSmallIcon(android.R.drawable.ic_media_play)
-            .build()
-        startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+        showForeground("AirPlay に送信中", target.displayName)
+        getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
+            .putString("last", target.serviceName).putString("last_host", target.host)
+            .putInt("last_port", target.port).putString("last_et", target.et).apply()
 
         MirrorState.running = true
         MirrorState.targetName = target.serviceName
@@ -59,9 +58,9 @@ class MirrorService : Service() {
         ) { failed ->
             session = null
             main.post {
-                if (failed && retries < MAX_RETRIES && request != null) {
+                if (failed && retries < maxRetries && request != null) {
                     retries++
-                    MirrorState.setStatus(MirrorState.Status.CONNECTING, "再接続します(${retries}/$MAX_RETRIES)…")
+                    MirrorState.setStatus(MirrorState.Status.CONNECTING, "再接続します(${retries}/$maxRetries)…")
                     main.postDelayed(retryRunnable, 4000)
                 } else {
                     finish()
@@ -70,7 +69,59 @@ class MirrorService : Service() {
         }.also { it.start() }
     }
 
+    private fun showForeground(title: String, text: String) {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "AirPlay 送信", NotificationManager.IMPORTANCE_LOW))
+        val n = Notification.Builder(this, CHANNEL)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.ic_media_play)
+            .build()
+        startForeground(1, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
+    }
+
+    /**
+     * 電源オン時の開始。ネットワークがまだ使えないことがあるので、mDNS で前回の送信先を探し直し、
+     * 見つからなければ保存してある IP で試す。接続に失敗しても長めに再試行する。
+     */
+    private fun bootStart() {
+        val prefs = getSharedPreferences("prefs", Context.MODE_PRIVATE)
+        val name = prefs.getString("last", null) ?: run { stopSelf(); return }
+        showForeground("AirPlay Mirror", "前回の送信先を探しています…")
+        MirrorState.running = true
+        MirrorState.targetName = name
+        MirrorState.setStatus(MirrorState.Status.CONNECTING, "起動中: 前回の送信先を探しています…")
+        maxRetries = BOOT_RETRIES
+        val volume = prefs.getInt("volume", 40)
+
+        var launched = false
+        fun launch(t: Target) {
+            if (launched) return
+            launched = true
+            discovery?.stop(); discovery = null
+            main.removeCallbacks(bootFallback)
+            startSession(
+                Intent().putExtra("name", t.serviceName).putExtra("host", t.host)
+                    .putExtra("port", t.port).putExtra("et", t.et).putExtra("volume", volume),
+                resetRetries = true,
+            )
+        }
+        bootFallback = Runnable {
+            discovery?.stop(); discovery = null
+            val host = prefs.getString("last_host", null)
+            if (host != null) launch(Target(name, host, prefs.getInt("last_port", 7000), prefs.getString("last_et", null)))
+            else finish()
+        }
+        discovery = RaopDiscovery(this) { found -> found.firstOrNull { it.serviceName == name }?.let { launch(it) } }
+            .also { it.start() }
+        main.postDelayed(bootFallback, 20000)
+    }
+
+    private var bootFallback = Runnable {}
+
     private fun stopAll() {
+        discovery?.stop(); discovery = null
+        main.removeCallbacks(bootFallback)
         main.removeCallbacks(retryRunnable)
         request = null
         session?.stop()
@@ -86,11 +137,13 @@ class MirrorService : Service() {
         stopSelf()
     }
 
-    override fun onDestroy() { main.removeCallbacks(retryRunnable); session?.stop(); super.onDestroy() }
+    override fun onDestroy() { discovery?.stop(); main.removeCallbacks(bootFallback); main.removeCallbacks(retryRunnable); session?.stop(); super.onDestroy() }
 
     companion object {
         const val ACTION_STOP = "stop"
         const val ACTION_VOLUME = "volume"
+        const val ACTION_BOOT = "boot"
+        private const val BOOT_RETRIES = 30
         const val LATENCY_FRAMES = 4410      // RAOP 遅延 約200ms
         private const val MAX_RETRIES = 5
         private const val CHANNEL = "mirror"

@@ -26,6 +26,7 @@ class MirrorSession(
     @Volatile private var failed = false
     @Volatile private var raop = 0L
     private var dadb: Dadb? = null
+    private var scid: String? = null
     private var worker: Thread? = null
     private val queue = PcmQueue(maxBytes = 44100 * 4 * 300 / 1000, targetBytes = 44100 * 4 * 60 / 1000)
 
@@ -74,7 +75,7 @@ class MirrorSession(
         log("サーバー転送完了 ${el()}")
         db.shell("pkill -f com.genymobile.scrcpy.Server")
 
-        val scid = "%08x".format((System.nanoTime() and 0x7fffffff).toInt())
+        val scid = "%08x".format((System.nanoTime() and 0x7fffffff).toInt()).also { this.scid = it }
         val cmd = "CLASSPATH=$remoteJar app_process / com.genymobile.scrcpy.Server $SERVER_VERSION " +
             "scid=$scid log_level=info video=false audio=true control=false audio_codec=raw " +
             "audio_source=playback tunnel_forward=true send_device_meta=false send_dummy_byte=false " +
@@ -162,7 +163,8 @@ class MirrorSession(
         val h = raop
         raop = 0
         if (h != 0L) RaopNative.close(h)
-        runCatching { dadb?.shell("pkill -f com.genymobile.scrcpy.Server") }
+        // 自分のセッションのサーバーだけ止める(後から始まった別セッションのサーバーを巻き込まない)
+        scid?.let { id -> runCatching { dadb?.shell("pkill -f scid=$id") } }
         runCatching { dadb?.close() }
     }
 
