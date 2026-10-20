@@ -1,0 +1,72 @@
+diff --git a/src/cliraop.c b/src/cliraop.c
+index a827790..d9e465d 100644
+--- a/src/cliraop.c
++++ b/src/cliraop.c
+@@ -195,6 +195,7 @@ int main(int argc, char *argv[]) {
+ 			port=atoi(argv[++i]);
+ 		} else if (!strcmp(argv[i],"-v")) {
+ 			volume=atoi(argv[++i]);
++			if (volume > 50) volume = 50;	// safety cap: never louder than 50
+ 		} else if (!strcmp(argv[i],"-w")) {
+ 			wait=atoi(argv[++i]);
+ 		} else if(!strcmp(argv[i],"-l")) {
+@@ -206,9 +207,9 @@ int main(int argc, char *argv[]) {
+ 		} else if (!strcmp(argv[i],"-m")) {
+ 			md = argv[++i];
+ 		} else if (!strcmp(argv[i], "-o")) {
+-			md = argv[++i];
+-		} else if(!strcmp(argv[i],"-t")) {
+ 			am = argv[++i];
++		} else if(!strcmp(argv[i],"-t")) {
++			et = argv[++i];
+ 		} else if (!strcmp(argv[i], "-u")) {
+ 			auth = true;
+ 		} else if (!strcmp(argv[i],"-a")) {
+@@ -270,6 +271,22 @@ int main(int argc, char *argv[]) {
+ 
+ 	init_platform(interactive);
+ 
++	// stdin: wait for the first chunk of audio BEFORE starting the RAOP session, otherwise the
++	// stream clock starts running while the source is still warming up and early audio is late
++	uint8_t *first = NULL;
++	int first_n = 0;
++	if (!strcmp(fname, "-")) {
++		size_t want = DEFAULT_FRAMES_PER_CHUNK * 4, got = 0;
++		first = malloc(want);
++		while (got < want) {
++			ssize_t r = read(infile, first + got, want - got);
++			if (r <= 0) break;
++			got += r;
++		}
++		first_n = (int) got;
++		if (!first_n) { free(first); close_platform(interactive); return 0; }
++	}
++
+ 	// if required, pair with appleTV
+ 	if (pairing) AppleTVpairing(NULL, NULL, &secret);
+ 	
+@@ -337,7 +354,23 @@ int main(int argc, char *argv[]) {
+ 		}
+ 
+ 		if (status == PLAYING && raopcl_accept_frames(raopcl)) {
+-			n = read(infile, buf, DEFAULT_FRAMES_PER_CHUNK * 4);
++			// pipes return short reads; fill a whole chunk so RTP packets keep a constant size
++			size_t want = DEFAULT_FRAMES_PER_CHUNK * 4, got = 0;
++			n = 0;
++			if (first_n) {
++				memcpy(buf, first, first_n);
++				got = first_n;
++				first_n = 0;
++				free(first);
++				first = NULL;
++			}
++			while (got < want) {
++				ssize_t r = read(infile, buf + got, want - got);
++				if (r <= 0) { n = got ? (int) got : (int) r; break; }
++				got += r;
++				n = (int) got;
++			}
++			if (n < 0) break;
+ 			if (!n)	continue;
+ 			raopcl_send_chunk(raopcl, buf, n / 4, &playtime);
+ 			frames += n / 4;

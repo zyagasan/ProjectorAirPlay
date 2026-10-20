@@ -25,6 +25,14 @@ shell 権限(uid 2000)のプロセスが `CAPTURE_AUDIO_OUTPUT` を使って `RE
 - macOS 標準の libcrypto だと abort する。`DYLD_LIBRARY_PATH` で Homebrew の openssl@3 を指定
 - `-v 20` + 小さい振幅だと聞こえないほど小さい。`-v 60` で確認できた。遅延は約1.25秒
 
+## Mac 経由の中継(確認済み 2026-10-20)
+`scripts/mirror-to-airplay.sh` で、プロジェクターの再生音(scrcpy)を AirMac Express へ送って再生できた。
+`SRC=playback VOL=50 GAIN=1.6 scripts/mirror-to-airplay.sh 25`
+- **RAOP 音量は 50 以下**(スクリプトと cliraop パッチで上限 50。100 は大きすぎる)
+- `output`(REMOTE_SUBMIX)は取得レベルが約 -42 dB と小さく、`playback` は約 -16 dB。音量は端末側設定に依存する可能性
+- stdin 入力では **最初の音を受け取ってから RAOP 接続する**必要あり(接続後に無音期間があると、音が遅れて捨てられ無音になる)。パッチで対応
+- パイプで 1 回の read が短いと音が途切れるため、1 チャンク分読み切るようにパッチ済み
+
 ## 次のステップ
 1. (済) Mac から AirMac Express へ PCM を RAOP 送信するテスト(libraop)
 2. キャプチャ用プロセス(Java, app_process)
