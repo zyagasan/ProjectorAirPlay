@@ -34,4 +34,5 @@ android {
 dependencies {
     implementation("dev.mobile:dadb:1.2.10")
     implementation("androidx.core:core-ktx:1.13.1")
+    testImplementation("junit:junit:4.13.2")
 }

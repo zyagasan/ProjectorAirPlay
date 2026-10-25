@@ -130,12 +130,17 @@ class MirrorSession(
         log("再生開始 ${el()}(遅延 ${RaopNative.latencyMs(raop)}ms / 音量 $volume)")
         onStatus(MirrorState.Status.STREAMING, "${target.displayName} へ送信中")
 
+        var nextStats = System.currentTimeMillis() + 15_000
         while (!stopped) {
             val chunk = queue.take(4096) ?: break
             if (RaopNative.send(raop, chunk, 0, chunk.size) != 0) break
+            if (System.currentTimeMillis() >= nextStats) {
+                nextStats += 15_000
+                log("統計: 破棄 ${queue.droppedBytes / 4 * 1000 / 44100}ms / 音待ち ${queue.underruns} 回")
+            }
         }
         if (!stopped) fail("送信が途切れました")
-        log("停止しました(破棄した音: ${queue.droppedBytes / 4 * 1000 / 44100}ms)")
+        log("停止しました(破棄した音: ${queue.droppedBytes / 4 * 1000 / 44100}ms / 音待ち ${queue.underruns} 回)")
     }
 
     /** 端末自身の adb(TCP 5555)へ接続する。初回はプロジェクターの画面で許可が必要。 */
@@ -172,6 +177,6 @@ class MirrorSession(
 
     companion object {
         const val SERVER_VERSION = "5.0.1"
-        const val MAX_VOLUME = 50      // これ以上は大きすぎる(100 は禁止)
+        const val MAX_VOLUME = 100     // AirPlay 音量の上限(100 = 最大)
     }
 }

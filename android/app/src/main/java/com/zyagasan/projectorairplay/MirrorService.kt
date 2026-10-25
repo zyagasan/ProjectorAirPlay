@@ -10,9 +10,75 @@ import android.content.pm.ServiceInfo
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.content.BroadcastReceiver
+import android.content.IntentFilter
+import android.media.AudioManager
+import android.widget.Toast
 
 /** 画面を閉じても動き続けるための前面サービス。状態は MirrorState に出す。 */
 class MirrorService : Service() {
+    private var toast: Toast? = null
+    private var volumeReceiverRegistered = false
+    private var originalSystemVolume = -1
+    private var baseSystemVolume = 1       // 端末の音量を常にこの値に保ち、ボタンで動いた分だけを AirPlay 音量に反映する
+    private var appliedDelta = 0           // いまの「ボタンで動かした分」のうち AirPlay 音量へ反映済みの段数
+
+    /**
+     * リモコンの音量ボタンは、この端末ではメーカー製の部品が先に処理するため、通常のキー入力としては取れない。
+     * 代わりに「端末の音量が変わった」通知を受け取り、基準からの差分を AirPlay 音量の増減に変換して、端末の音量は基準へ戻す。
+     */
+    private val volumeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(c: Context, i: Intent) {
+            if (i.getIntExtra("android.media.EXTRA_VOLUME_STREAM_TYPE", -1) != AudioManager.STREAM_MUSIC) return
+            val nv = i.getIntExtra("android.media.EXTRA_VOLUME_STREAM_VALUE", -1)
+            if (nv < 0) return
+            if (nv == baseSystemVolume) { appliedDelta = 0; return }               // 基準へ戻った(自分で戻した分を含む)
+            if (!getSharedPreferences("prefs", Context.MODE_PRIVATE).getBoolean("volkeys", true)) return
+            if (!MirrorState.running || MirrorState.status != MirrorState.Status.STREAMING) return
+            val delta = nv - baseSystemVolume
+            val change = delta - appliedDelta                                      // 続けて押された分だけを反映する
+            appliedDelta = delta
+            if (change != 0) {
+                val v = changeVolume(c, MirrorState.volume + change * VOLUME_STEP)
+                toast?.cancel()
+                toast = Toast.makeText(c, "AirPlay 音量  $v", Toast.LENGTH_SHORT).also { it.show() }
+            }
+            setSystemVolume(baseSystemVolume)
+        }
+    }
+
+    private fun setSystemVolume(v: Int) {
+        runCatching { (getSystemService(Context.AUDIO_SERVICE) as AudioManager).setStreamVolume(AudioManager.STREAM_MUSIC, v, 0) }
+    }
+
+    private fun startVolumeKeys() {
+        if (volumeReceiverRegistered) return
+        val am = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        originalSystemVolume = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+        // 下げる方向も検出できるよう、基準は 1 以上・最大未満にする(0 のときは 1=ほぼ無音にして、終了時に元へ戻す)
+        baseSystemVolume = originalSystemVolume.coerceIn(1, (am.getStreamMaxVolume(AudioManager.STREAM_MUSIC) - 1).coerceAtLeast(1))
+        appliedDelta = 0
+        if (baseSystemVolume != originalSystemVolume) setSystemVolume(baseSystemVolume)
+        registerReceiver(volumeReceiver, IntentFilter("android.media.VOLUME_CHANGED_ACTION"), Context.RECEIVER_EXPORTED)
+        volumeReceiverRegistered = true
+    }
+
+    /** 一時停止中(Netflix など)は端末の音量をそのまま使えるよう、受信だけ止める(音量は元に戻さない)。 */
+    private fun suspendVolumeKeys() {
+        if (!volumeReceiverRegistered) return
+        runCatching { unregisterReceiver(volumeReceiver) }
+        volumeReceiverRegistered = false
+        originalSystemVolume = -1
+    }
+
+    private fun stopVolumeKeys() {
+        if (!volumeReceiverRegistered) return
+        runCatching { unregisterReceiver(volumeReceiver) }
+        volumeReceiverRegistered = false
+        if (originalSystemVolume >= 0) setSystemVolume(originalSystemVolume)
+        originalSystemVolume = -1
+    }
+
     private var watcher: ForegroundWatcher? = null
     private var paused = false
     private var pausedFor: String? = null
@@ -51,6 +117,7 @@ class MirrorService : Service() {
             i.getStringExtra("name")!!, i.getStringExtra("host")!!, i.getIntExtra("port", 7000), i.getStringExtra("et"),
         )
         val volume = i.getIntExtra("volume", 40)
+        MirrorState.volume = volume
 
         showForeground("AirPlay に送信中", target.displayName)
         getSharedPreferences("prefs", Context.MODE_PRIVATE).edit()
@@ -78,6 +145,7 @@ class MirrorService : Service() {
             }
         }.also { it.start() }
         startWatching()
+        startVolumeKeys()
     }
 
     /** Netflix などの前面表示中は、音声取得が動いているだけで再生できなくなるため、取得を止める。 */
@@ -100,6 +168,7 @@ class MirrorService : Service() {
             main.removeCallbacks(retryRunnable)
             session?.stop()
             session = null
+            suspendVolumeKeys()
             MirrorState.add("前面が $fg のため、音声取得を一時停止")
             MirrorState.setStatus(MirrorState.Status.PAUSED, "Netflix 視聴中は一時停止")
         } else if (paused && !blocked) {
@@ -177,6 +246,7 @@ class MirrorService : Service() {
     }
 
     private fun finish() {
+        stopVolumeKeys()
         main.removeCallbacks(watchRunnable)
         val st = MirrorState.status
         MirrorState.running = false
@@ -185,12 +255,25 @@ class MirrorService : Service() {
         stopSelf()
     }
 
-    override fun onDestroy() { main.removeCallbacks(watchRunnable); discovery?.stop(); main.removeCallbacks(bootFallback); main.removeCallbacks(retryRunnable); session?.stop(); super.onDestroy() }
+    override fun onDestroy() { stopVolumeKeys(); main.removeCallbacks(watchRunnable); discovery?.stop(); main.removeCallbacks(bootFallback); main.removeCallbacks(retryRunnable); session?.stop(); super.onDestroy() }
 
     companion object {
         const val ACTION_STOP = "stop"
         const val ACTION_VOLUME = "volume"
         const val ACTION_BOOT = "boot"
+        const val VOLUME_STEP = 5
+
+        /** AirPlay 音量(0〜100)を変更する。保存し、送信中ならすぐ反映する。返り値は設定後の値。 */
+        fun changeVolume(ctx: Context, v: Int): Int {
+            val nv = v.coerceIn(0, MirrorSession.MAX_VOLUME)
+            MirrorState.volume = nv
+            ctx.getSharedPreferences("prefs", Context.MODE_PRIVATE).edit().putInt("volume", nv).apply()
+            if (MirrorState.running) {
+                ctx.startService(Intent(ctx, MirrorService::class.java).setAction(ACTION_VOLUME).putExtra("volume", nv))
+            }
+            MirrorState.notifyChanged()
+            return nv
+        }
         private const val BOOT_RETRIES = 30
         private const val WATCH_INTERVAL_MS = 700L
         /** 音声取得が動いていると再生できなくなるアプリ(この端末の Netflix)。 */
@@ -209,6 +292,7 @@ object MirrorState {
     @Volatile var status = Status.IDLE
     @Volatile var detail = "停止中"
     @Volatile var targetName: String? = null
+    @Volatile var volume = 40
     private val lines = ArrayDeque<String>()
     @Volatile var listener: (() -> Unit)? = null
 

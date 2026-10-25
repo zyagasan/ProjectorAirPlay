@@ -11,6 +11,7 @@ class PcmQueue(private val maxBytes: Int, private val targetBytes: Int) {
     private var total = 0
     private var closed = false
     @Volatile var droppedBytes = 0L
+    @Volatile var underruns = 0L          // 送信側が音を待たされた回数(音切れの原因になる)
 
     @Synchronized fun put(data: ByteArray) {
         if (data.isEmpty()) return
@@ -26,6 +27,7 @@ class PcmQueue(private val maxBytes: Int, private val targetBytes: Int) {
 
     /** 最大 max バイトを取り出す。データが来るまで待つ。閉じられたら null。 */
     @Synchronized fun take(max: Int): ByteArray? {
+        if (chunks.isEmpty() && !closed) underruns++
         while (chunks.isEmpty()) {
             if (closed) return null
             (this as Object).wait()

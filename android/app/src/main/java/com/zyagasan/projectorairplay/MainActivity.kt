@@ -31,7 +31,6 @@ class MainActivity : Activity() {
 
     private var targets = listOf<Target>()
     private var selected: Target? = null
-    private var volume = 40
     private var autoStart = true
     private var autoBoot = true
     private var pauseNetflix = true
@@ -44,6 +43,9 @@ class MainActivity : Activity() {
     private lateinit var emptyHint: TextView
     private lateinit var toggle: Button
     private lateinit var volumeText: TextView
+    private lateinit var volumeBar: android.widget.ProgressBar
+    private lateinit var keysBtn: Button
+    private var volKeys = true
     private lateinit var autoBtn: Button
     private lateinit var bootBtn: Button
     private lateinit var pauseBtn: Button
@@ -55,10 +57,11 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        volume = prefs.getInt("volume", 40).coerceIn(0, MirrorSession.MAX_VOLUME)
+        MirrorState.volume = prefs.getInt("volume", 40).coerceIn(0, MirrorSession.MAX_VOLUME)
         autoStart = prefs.getBoolean("auto", true)
         autoBoot = prefs.getBoolean("boot", true)
         pauseNetflix = prefs.getBoolean("pause_netflix", true)
+        volKeys = prefs.getBoolean("volkeys", true)
         autoStartPending = autoStart && savedInstanceState == null && !MirrorState.running
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         buildUi()
@@ -120,7 +123,7 @@ class MainActivity : Activity() {
         prefs.edit().putString("last", t.serviceName).apply()
         val i = Intent(this, MirrorService::class.java)
             .putExtra("name", t.serviceName).putExtra("host", t.host).putExtra("port", t.port)
-            .putExtra("et", t.et).putExtra("volume", volume)
+            .putExtra("et", t.et).putExtra("volume", MirrorState.volume)
         startForegroundService(i)
     }
 
@@ -134,12 +137,8 @@ class MainActivity : Activity() {
     }
 
     private fun setVolume(v: Int) {
-        volume = v.coerceIn(0, MirrorSession.MAX_VOLUME)
-        prefs.edit().putInt("volume", volume).apply()
+        MirrorService.changeVolume(this, v)
         refresh()
-        if (MirrorState.running) {
-            startService(Intent(this, MirrorService::class.java).setAction(MirrorService.ACTION_VOLUME).putExtra("volume", volume))
-        }
     }
 
     // ---- 画面 ----
@@ -170,10 +169,14 @@ class MainActivity : Activity() {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         toggle = button("開始", 28f) { onToggle() }
         bar.addView(toggle, LinearLayout.LayoutParams(dp(260), dp(72)).apply { rightMargin = dp(32) })
-        bar.addView(button("−", 30f) { setVolume(volume - 5) }, LinearLayout.LayoutParams(dp(72), dp(72)))
-        volumeText = label("", 24f, Color.WHITE).apply { gravity = Gravity.CENTER; minWidth = dp(220) }
-        bar.addView(volumeText)
-        bar.addView(button("＋", 30f) { setVolume(volume + 5) }, LinearLayout.LayoutParams(dp(72), dp(72)))
+        bar.addView(button("−", 30f) { setVolume(MirrorState.volume - VOLUME_STEP) }, LinearLayout.LayoutParams(dp(72), dp(72)))
+        val vbox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
+        volumeText = label("", 24f, Color.WHITE).apply { gravity = Gravity.CENTER }
+        volumeBar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
+        vbox.addView(volumeText)
+        vbox.addView(volumeBar, LinearLayout.LayoutParams(-1, dp(10)).apply { topMargin = dp(8) })
+        bar.addView(vbox, LinearLayout.LayoutParams(dp(300), -2).apply { leftMargin = dp(16); rightMargin = dp(16) })
+        bar.addView(button("＋", 30f) { setVolume(MirrorState.volume + VOLUME_STEP) }, LinearLayout.LayoutParams(dp(72), dp(72)))
         root.addView(bar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
 
         // 設定列
@@ -200,7 +203,13 @@ class MainActivity : Activity() {
             prefs.edit().putBoolean("pause_netflix", pauseNetflix).apply()
             refresh()
         }
-        opts2.addView(pauseBtn, LinearLayout.LayoutParams(dp(560), dp(56)))
+        opts2.addView(pauseBtn, LinearLayout.LayoutParams(dp(560), dp(56)).apply { rightMargin = dp(16) })
+        keysBtn = button("", 20f) {
+            volKeys = !volKeys
+            prefs.edit().putBoolean("volkeys", volKeys).apply()
+            refresh()
+        }
+        opts2.addView(keysBtn, LinearLayout.LayoutParams(dp(560), dp(56)))
         root.addView(opts2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
 
         logText = label("", 14f, Color.LTGRAY).apply { typeface = Typeface.MONOSPACE }
@@ -248,9 +257,11 @@ class MainActivity : Activity() {
         toggle.text = if (MirrorState.running) "■  停止" else "▶  開始"
         toggle.isEnabled = MirrorState.running || selected != null
         toggle.alpha = if (toggle.isEnabled) 1f else 0.45f
-        volumeText.text = "AirPlay 音量  $volume"
+        volumeText.text = "AirPlay 音量  ${MirrorState.volume} / 100"
+        volumeBar.progress = MirrorState.volume
         autoBtn.text = "アプリ起動時に自動開始: " + if (autoStart) "オン" else "オフ"
         bootBtn.text = "電源オン時に自動起動: " + if (autoBoot) "オン" else "オフ"
+        keysBtn.text = "リモコンの音量ボタンで AirPlay 音量: " + if (volKeys) "オン" else "オフ"
         pauseBtn.text = "Netflix 視聴中は自動で一時停止: " + if (pauseNetflix) "オン" else "オフ"
         logBtn.text = if (showLog) "ログを隠す" else "ログを表示"
         logScroll.visibility = if (showLog) View.VISIBLE else View.GONE
@@ -287,6 +298,7 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        private const val VOLUME_STEP = 5
         private val BG = Color.parseColor("#0E1217")
         private val SURFACE = Color.parseColor("#1F2630")
         private val SELECTED = Color.parseColor("#1D3B63")
