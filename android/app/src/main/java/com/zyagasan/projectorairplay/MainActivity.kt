@@ -34,6 +34,7 @@ class MainActivity : Activity() {
     private var volume = 40
     private var autoStart = true
     private var autoBoot = true
+    private var pauseNetflix = true
     private var autoStartPending = false
     private var showLog = false
 
@@ -45,6 +46,7 @@ class MainActivity : Activity() {
     private lateinit var volumeText: TextView
     private lateinit var autoBtn: Button
     private lateinit var bootBtn: Button
+    private lateinit var pauseBtn: Button
     private lateinit var logBtn: Button
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
@@ -56,6 +58,7 @@ class MainActivity : Activity() {
         volume = prefs.getInt("volume", 40).coerceIn(0, MirrorSession.MAX_VOLUME)
         autoStart = prefs.getBoolean("auto", true)
         autoBoot = prefs.getBoolean("boot", true)
+        pauseNetflix = prefs.getBoolean("pause_netflix", true)
         autoStartPending = autoStart && savedInstanceState == null && !MirrorState.running
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         buildUi()
@@ -191,6 +194,15 @@ class MainActivity : Activity() {
         opts.addView(logBtn, LinearLayout.LayoutParams(dp(220), dp(56)))
         root.addView(opts, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
 
+        val opts2 = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        pauseBtn = button("", 20f) {
+            pauseNetflix = !pauseNetflix
+            prefs.edit().putBoolean("pause_netflix", pauseNetflix).apply()
+            refresh()
+        }
+        opts2.addView(pauseBtn, LinearLayout.LayoutParams(dp(560), dp(56)))
+        root.addView(opts2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+
         logText = label("", 14f, Color.LTGRAY).apply { typeface = Typeface.MONOSPACE }
         logScroll = ScrollView(this).apply { addView(logText); visibility = View.GONE }
         root.addView(logScroll, LinearLayout.LayoutParams(-1, dp(150)).apply { topMargin = dp(12) })
@@ -226,6 +238,7 @@ class MainActivity : Activity() {
         val color = when (st) {
             MirrorState.Status.STREAMING -> GREEN
             MirrorState.Status.CONNECTING -> AMBER
+            MirrorState.Status.PAUSED -> BLUE
             MirrorState.Status.ERROR -> RED
             MirrorState.Status.IDLE -> MUTED
         }
@@ -238,6 +251,7 @@ class MainActivity : Activity() {
         volumeText.text = "AirPlay 音量  $volume"
         autoBtn.text = "アプリ起動時に自動開始: " + if (autoStart) "オン" else "オフ"
         bootBtn.text = "電源オン時に自動起動: " + if (autoBoot) "オン" else "オフ"
+        pauseBtn.text = "Netflix 視聴中は自動で一時停止: " + if (pauseNetflix) "オン" else "オフ"
         logBtn.text = if (showLog) "ログを隠す" else "ログを表示"
         logScroll.visibility = if (showLog) View.VISIBLE else View.GONE
         if (showLog) {
@@ -281,5 +295,6 @@ class MainActivity : Activity() {
         private val GREEN = Color.parseColor("#3DDC84")
         private val AMBER = Color.parseColor("#FFB020")
         private val RED = Color.parseColor("#FF5252")
+        private val BLUE = Color.parseColor("#5AA9FF")
     }
 }

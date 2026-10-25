@@ -63,6 +63,8 @@ class MirrorSession(
         onStatus(MirrorState.Status.CONNECTING, "プロジェクターに接続中…")
         val db = connectAdb() ?: return
         dadb = db
+        // 前面アプリの検出(Netflix 視聴中の一時停止)に使う権限を、adb(shell 権限)で付与しておく
+        runCatching { db.shell("appops set ${ctx.packageName} GET_USAGE_STATS allow") }
         onStatus(MirrorState.Status.CONNECTING, "音声取得を準備中…")
 
         // 取得サーバー(scrcpy-server)を端末へ置いて、shell 権限で起動する

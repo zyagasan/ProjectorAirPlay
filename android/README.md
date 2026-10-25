@@ -39,6 +39,17 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - 注意: リモコンの電源ボタンが「スタンバイ」だけの場合は再起動にならないため、BOOT_COMPLETED は来ない
   (スタンバイからの復帰時はサービスが生きていればそのまま送信を続ける)。
 
+## Netflix との相性(重要)
+この端末(FORMOVIE L1 Pro / Android 14)では、**音声取得(playback でも output でも)が動いている間、Netflix が
+`tvq-pb-101` で再生できなくなる**(2026-10-25 に切り分け: アプリ有無・取得方式・取得の起動元を変えて確認。
+取得が流れているだけで再現し、AirPlay への送信や変換の有無は無関係)。ログ上は Netflix の E-AC3 音声トラック作成が
+`AudioFlinger: createTrack_l() Bad parameter: format 0xa000000 ... output with format 0x1` で拒否される。
+また Netflix の音声は DRM で保護されており、取得しても無音のため、AirPlay には流せない。
+
+対策として、**Netflix が前面にある間は自動で取得を一時停止**し、離れたら再開する(`ForegroundWatcher` +
+`MirrorService.checkForeground`)。前面アプリは UsageStats で調べ、権限は adb で `appops set ... GET_USAGE_STATS allow`
+して付与する。画面の「Netflix 視聴中は自動で一時停止」で切り替えられる。
+
 ## 設計メモ
 - 音声取得は同梱の scrcpy-server(Apache-2.0, `app/src/main/assets/scrcpy-server.jar`, v5.0.1)を shell 権限で起動して使う。
   `audio_codec=raw`, `send_*_meta=false` で生の PCM をそのまま受け取る。

@@ -13,6 +13,15 @@ import android.os.Looper
 
 /** 画面を閉じても動き続けるための前面サービス。状態は MirrorState に出す。 */
 class MirrorService : Service() {
+    private var watcher: ForegroundWatcher? = null
+    private var paused = false
+    private var pausedFor: String? = null
+    private val watchRunnable = object : Runnable {
+        override fun run() {
+            checkForeground()
+            main.postDelayed(this, WATCH_INTERVAL_MS)
+        }
+    }
     private var discovery: RaopDiscovery? = null
     private var maxRetries = MAX_RETRIES
     private var session: MirrorSession? = null
@@ -58,6 +67,7 @@ class MirrorService : Service() {
         ) { failed ->
             session = null
             main.post {
+                if (paused) return@post
                 if (failed && retries < maxRetries && request != null) {
                     retries++
                     MirrorState.setStatus(MirrorState.Status.CONNECTING, "再接続します(${retries}/$maxRetries)…")
@@ -67,6 +77,41 @@ class MirrorService : Service() {
                 }
             }
         }.also { it.start() }
+        startWatching()
+    }
+
+    /** Netflix などの前面表示中は、音声取得が動いているだけで再生できなくなるため、取得を止める。 */
+    private fun startWatching() {
+        if (watcher == null) watcher = ForegroundWatcher(this)
+        main.removeCallbacks(watchRunnable)
+        main.postDelayed(watchRunnable, WATCH_INTERVAL_MS)
+    }
+
+    private fun checkForeground() {
+        if (!getSharedPreferences("prefs", Context.MODE_PRIVATE).getBoolean("pause_netflix", true)) {
+            if (paused) resumeAfterPause()
+            return
+        }
+        val fg = watcher?.current()
+        val blocked = fg != null && fg in PAUSE_PACKAGES
+        if (!paused && blocked) {
+            paused = true
+            pausedFor = fg
+            main.removeCallbacks(retryRunnable)
+            session?.stop()
+            session = null
+            MirrorState.add("前面が $fg のため、音声取得を一時停止")
+            MirrorState.setStatus(MirrorState.Status.PAUSED, "Netflix 視聴中は一時停止")
+        } else if (paused && !blocked) {
+            resumeAfterPause()
+        }
+    }
+
+    private fun resumeAfterPause() {
+        paused = false
+        pausedFor = null
+        MirrorState.add("音声取得を再開")
+        request?.let { startSession(it, resetRetries = true) }
     }
 
     private fun showForeground(title: String, text: String) {
@@ -120,6 +165,8 @@ class MirrorService : Service() {
     private var bootFallback = Runnable {}
 
     private fun stopAll() {
+        main.removeCallbacks(watchRunnable)
+        paused = false
         discovery?.stop(); discovery = null
         main.removeCallbacks(bootFallback)
         main.removeCallbacks(retryRunnable)
@@ -130,6 +177,7 @@ class MirrorService : Service() {
     }
 
     private fun finish() {
+        main.removeCallbacks(watchRunnable)
         val st = MirrorState.status
         MirrorState.running = false
         if (st != MirrorState.Status.ERROR) MirrorState.setStatus(MirrorState.Status.IDLE, "停止中")
@@ -137,13 +185,16 @@ class MirrorService : Service() {
         stopSelf()
     }
 
-    override fun onDestroy() { discovery?.stop(); main.removeCallbacks(bootFallback); main.removeCallbacks(retryRunnable); session?.stop(); super.onDestroy() }
+    override fun onDestroy() { main.removeCallbacks(watchRunnable); discovery?.stop(); main.removeCallbacks(bootFallback); main.removeCallbacks(retryRunnable); session?.stop(); super.onDestroy() }
 
     companion object {
         const val ACTION_STOP = "stop"
         const val ACTION_VOLUME = "volume"
         const val ACTION_BOOT = "boot"
         private const val BOOT_RETRIES = 30
+        private const val WATCH_INTERVAL_MS = 700L
+        /** 音声取得が動いていると再生できなくなるアプリ(この端末の Netflix)。 */
+        private val PAUSE_PACKAGES = setOf("com.netflix.ninja")
         const val LATENCY_FRAMES = 4410      // RAOP 遅延 約200ms
         private const val MAX_RETRIES = 5
         private const val CHANNEL = "mirror"
@@ -152,7 +203,7 @@ class MirrorService : Service() {
 
 /** Activity とサービスの間で共有する、画面表示用の状態。 */
 object MirrorState {
-    enum class Status { IDLE, CONNECTING, STREAMING, ERROR }
+    enum class Status { IDLE, CONNECTING, STREAMING, PAUSED, ERROR }
 
     @Volatile var running = false
     @Volatile var status = Status.IDLE
