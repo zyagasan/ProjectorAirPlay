@@ -44,6 +44,10 @@ shell 権限(uid 2000)のプロセスが `CAPTURE_AUDIO_OUTPUT` を使って `RE
 `android/` に Android TV アプリを作成。プロジェクター単体で「再生音の取得 → AirMac Express へ送信」まで動き、
 Mac 経由より遅延が減ったことを確認した。詳細は [android/README.md](android/README.md)。
 
+## 外部デバイス方式(2026-11-07〜)
+アプリ方式は Netflix と両立できないため、Bluetooth で音を受けて AirPlay へ送る外部デバイス(Raspberry Pi)方式を設計中。
+[hardware/DESIGN.md](hardware/DESIGN.md)
+
 ## 次のステップ
 1. (済) Mac から AirMac Express へ PCM を RAOP 送信するテスト(libraop)
 2. キャプチャ用プロセス(Java, app_process)
