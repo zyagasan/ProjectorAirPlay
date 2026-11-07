@@ -60,6 +60,26 @@ static pthread_mutex_t r_mtx = PTHREAD_MUTEX_INITIALIZER;
 static volatile bool capture_alive = true;
 static uint64_t stat_underruns = 0, stat_overruns = 0, stat_capture_frames = 0;
 
+/* 受信した音の大きさ(直近約 3 秒の RMS とピーク、dBFS)。無音部分は除いて平均する */
+static double lv_sum = 0, lv_peak = 0, lv_rms_db = -120, lv_peak_db = -120;
+static size_t lv_n = 0;
+static void level_feed(const int16_t *s, size_t frames) {
+	for (size_t i = 0; i < frames * CH; i++) {
+		double x = s[i] / 32768.0;
+		lv_sum += x * x;
+		if (fabs(x) > lv_peak) lv_peak = fabs(x);
+	}
+	lv_n += frames * CH;
+	if (lv_n >= (size_t) RATE * CH * 3) {
+		double rms = sqrt(lv_sum / lv_n);
+		if (rms > 1e-5) {    /* 約 -100dBFS 以下(無音)は更新しない */
+			lv_rms_db = 20 * log10(rms);
+			lv_peak_db = 20 * log10(lv_peak > 1e-6 ? lv_peak : 1e-6);
+		}
+		lv_sum = 0; lv_peak = 0; lv_n = 0;
+	}
+}
+
 static size_t ring_fill_locked(void) { return (r_head + RING_FRAMES - r_tail) % RING_FRAMES; }
 static size_t ring_fill(void) { pthread_mutex_lock(&r_mtx); size_t f = ring_fill_locked(); pthread_mutex_unlock(&r_mtx); return f; }
 
@@ -74,6 +94,7 @@ static void ring_push(const int16_t *src, size_t frames) {
 		r_head = (r_head + 1) % RING_FRAMES;
 	}
 	stat_capture_frames += frames;
+	level_feed(src, frames);
 	pthread_mutex_unlock(&r_mtx);
 }
 
@@ -153,10 +174,11 @@ static void write_status(bool connected, double fill_ms, double ratio) {
 	FILE *f = fopen(tmp, "w");
 	if (!f) return;
 	fprintf(f, "{\"connected\":%s,\"fill_ms\":%.1f,\"target_ms\":%d,\"ratio_ppm\":%.0f,\"underruns\":%llu,"
-	        "\"overruns\":%llu,\"volume\":%d,\"latency_ms\":%d,\"capture_alive\":%s,\"captured_s\":%.1f}\n",
+	        "\"overruns\":%llu,\"volume\":%d,\"latency_ms\":%d,\"capture_alive\":%s,\"captured_s\":%.1f,"
+	        "\"level_rms_db\":%.1f,\"level_peak_db\":%.1f}\n",
 	        connected ? "true" : "false", fill_ms, opt.target_ms, (ratio - 1.0) * 1e6,
 	        (unsigned long long) stat_underruns, (unsigned long long) stat_overruns, opt.volume, opt.latency_ms,
-	        capture_alive ? "true" : "false", stat_capture_frames / (double) RATE);
+	        capture_alive ? "true" : "false", stat_capture_frames / (double) RATE, lv_rms_db, lv_peak_db);
 	fclose(f);
 	rename(tmp, opt.status);
 }

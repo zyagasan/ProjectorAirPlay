@@ -181,6 +181,8 @@
         <div class="stat"><div class="n" id="sOver">—</div><div class="l">あふれ</div></div>
         <div class="stat"><div class="n" id="sPpm">—</div><div class="l">時計補正 (ppm)</div></div>
         <div class="stat"><div class="n" id="sTime">—</div><div class="l">受信時間</div></div>
+        <div class="stat"><div class="n" id="sRms">—</div><div class="l">受信音量 平均 (dBFS)</div></div>
+        <div class="stat"><div class="n" id="sPeak">—</div><div class="l">受信音量 ピーク (dBFS)</div></div>
       </div>
       <details style="margin-top:14px"><summary>ログ</summary><pre id="logs"></pre></details>
     </section>
@@ -256,6 +258,8 @@ async function refresh() {
   $("fillTxt").textContent = streaming ? `${fill.toFixed(0)}ms / 目標 ${target}ms` : "—";
   $("sUnder").textContent = e.underruns ?? "—"; $("sOver").textContent = e.overruns ?? "—";
   $("sPpm").textContent = e.ratio_ppm ?? "—"; $("sTime").textContent = e.captured_s ? fmtTime(e.captured_s) : "—";
+  $("sRms").textContent = e.level_rms_db > -100 ? e.level_rms_db.toFixed(1) : "—";
+  $("sPeak").textContent = e.level_peak_db > -100 ? e.level_peak_db.toFixed(1) : "—";
   const pre = $("logs"), atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
   pre.textContent = (s.logs || []).join("\n"); if (atBottom) pre.scrollTop = pre.scrollHeight;
   if (!lastTargets.length) loadTargets(c.target);
