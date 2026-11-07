@@ -1,0 +1,14 @@
+[Unit]
+Description=AirPlay Bridge (Bluetooth -> AirPlay) controller and web UI
+After=network-online.target bluealsad.service
+Wants=network-online.target bluealsad.service
+
+[Service]
+User=pi
+RuntimeDirectory=airplay-bridge
+ExecStart=/usr/bin/python3 /home/pi/airplay-bridge/bridge/controller/airplay_bridge.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

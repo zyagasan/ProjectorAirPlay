@@ -127,3 +127,28 @@ Raspberry Pi で動作と音質・遅延を確定させてから検討する。
 - 端子: [Xiaomi L1 Pro 仕様(Euronics)](https://www.euronics.ee/en/tv/home-cinemas/home-cinema-projectors/bhr9588eu/xiaomi-l1-pro-smart-projector-black-projector), [manuals.plus](https://manuals.plus/asin/B0DZSXC4VB), [Xiaomi Japan L1 仕様](https://www.mi.com/jp/product/xiaomi-smart-projector-l1/specs/)
 - 遅延申告: [org.bluealsa.PCM1(Delay / DelayAdjustment)](https://manpages.ubuntu.com/manpages/oracular/man7/org.bluealsa.PCM1.7.html), [BlueZ: A2DP transport の Delay を書き込み可能にするパッチ](https://patchwork.kernel.org/project/bluetooth/patch/20241026191434.556716-2-arkadiusz.bokowy@gmail.com/mbox)
 - AirPlay 送信の代替: [PipeWire RAOP discover/sink](https://docs.pipewire.org/page_module_raop_discover.html)
+
+## 10. 実装(2026-11-07、動作確認済み)
+
+既存の Raspberry Pi 3 Model B+(Homebridge 用、有線 LAN、Debian 13)に同居させた。
+
+| 部分 | 内容 |
+|---|---|
+| Bluetooth 受信 | **BlueALSA master(v5 系)をソースからビルド**(`--enable-aac`、fdk-aac)。Debian の 4.3.1 は AAC 非対応で、遅延の申告も BlueZ に伝えないため。`/etc/systemd/system/bluealsad.service`(`-p a2dp-sink -c SBC -c AAC --a2dp-force-audio-cd`) |
+| 送信エンジン | `bridge/engine/airplay_bridge_engine.c`。ALSA で受信 → リングバッファ → libsamplerate の可変レート変換で時計のずれを吸収 → libraop。CPU 約 20%(cliraop は空回りで 93%) |
+| 管理 Web | `bridge/controller/`(Python 標準ライブラリのみ)。`http://raspberrypi.local:8590/` |
+| 自動起動 | `airplay-bridge.service`(systemd) |
+
+確認できたこと:
+- プロジェクターは **AAC 44.1kHz** で送ってくる。
+- **遅延の申告が効く**: BlueALSA の ClientDelay(AirPlay 600 + バッファ 120 + 補正 30 = 750ms)が BlueZ の
+  `MediaTransport1.Delay` 経由でプロジェクターに届き、映像が遅れて口の動きと音が合った。
+- AirPlay 遅延 600ms で途切れなし(200ms だと Bluetooth の揺らぎで途切れた)。
+
+つまずき点:
+- Pi の Bluetooth が rfkill でソフトブロックされていた(Wi-Fi は有線運用なのでブロックのまま)。
+- ユーザーセッションの WirePlumber が Bluetooth の音声を先に取っていた → `~/.config/wireplumber/wireplumber.conf.d/90-airplay-bridge-no-bluez.conf` で無効化。
+- BlueALSA の SoftVolume が有効だと、プロジェクターの音量(0〜127)が音に掛かって小さくなる → オフにし、音量は AirPlay 側で扱う。
+- プロジェクターの AirPlay Mirror アプリが動いていると、音がアプリの取得経路(REMOTE_SUBMIX)に流れ、Bluetooth に来ない →
+  アプリの自動起動をオフにした。
+- `pkill -f` は ssh のコマンド行自身にも一致して接続ごと殺すので、`pkill -x` を使う。
