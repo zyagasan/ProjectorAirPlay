@@ -7,7 +7,6 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.graphics.drawable.StateListDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -16,12 +15,15 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
 /**
- * リモコン(D-pad)で操作する画面。送信先を選んで「開始」。
+ * リモコン(D-pad)で操作する画面。
+ *  左: いまの状態(大きな表示)と 開始/停止
+ *  右: 送信先カード / 音量バー / 設定スイッチ
  * 起動時は前回の送信先が見つかり次第、自動で送信を開始する。
  */
 class MainActivity : Activity() {
@@ -31,38 +33,29 @@ class MainActivity : Activity() {
 
     private var targets = listOf<Target>()
     private var selected: Target? = null
-    private var autoStart = true
-    private var autoBoot = true
-    private var pauseNetflix = true
     private var autoStartPending = false
-    private var showLog = false
 
-    private lateinit var statusDot: View
+    private lateinit var orb: StatusOrb
     private lateinit var statusText: TextView
+    private lateinit var subText: TextView
+    private lateinit var startBtn: TextView
     private lateinit var deviceBox: LinearLayout
-    private lateinit var emptyHint: TextView
-    private lateinit var toggle: Button
-    private lateinit var volumeText: TextView
-    private lateinit var volumeBar: android.widget.ProgressBar
-    private lateinit var keysBtn: Button
-    private var volKeys = true
-    private lateinit var autoBtn: Button
-    private lateinit var bootBtn: Button
-    private lateinit var pauseBtn: Button
-    private lateinit var logBtn: Button
+    private lateinit var deviceCount: TextView
+    private lateinit var volumeValue: TextView
+    private lateinit var volumeBar: VolumeBar
+    private lateinit var tAuto: ToggleRow
+    private lateinit var tBoot: ToggleRow
+    private lateinit var tNetflix: ToggleRow
+    private lateinit var tKeys: ToggleRow
+    private lateinit var logToggle: TextView
     private lateinit var logText: TextView
     private lateinit var logScroll: ScrollView
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private var showLog = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MirrorState.volume = prefs.getInt("volume", 40).coerceIn(0, MirrorSession.MAX_VOLUME)
-        autoStart = prefs.getBoolean("auto", true)
-        autoBoot = prefs.getBoolean("boot", true)
-        pauseNetflix = prefs.getBoolean("pause_netflix", true)
-        volKeys = prefs.getBoolean("volkeys", true)
-        autoStartPending = autoStart && savedInstanceState == null && !MirrorState.running
+        autoStartPending = prefs.getBoolean("auto", true) && savedInstanceState == null && !MirrorState.running
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         buildUi()
 
@@ -74,6 +67,7 @@ class MainActivity : Activity() {
             }
             renderDevices()
             maybeAutoStart()
+            refresh()
         }
         if (autoStartPending) {
             MirrorState.setStatus(MirrorState.Status.CONNECTING, "前回の送信先を探しています…")
@@ -136,134 +130,165 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun setVolume(v: Int) {
-        MirrorService.changeVolume(this, v)
-        refresh()
-    }
+    private fun setPref(key: String, v: Boolean) = prefs.edit().putBoolean(key, v).apply()
 
-    // ---- 画面 ----
+    // ---- 画面の組み立て ----
 
     private fun buildUi() {
         val root = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Palette.BG_TOP, Palette.BG_BOTTOM))
+            setPadding(dp(56), dp(36), dp(56), dp(32))
+            clipChildren = false; clipToPadding = false
+        }
+
+        // ---- 左: 状態 ----
+        val left = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(BG)
-            setPadding(dp(56), dp(28), dp(56), dp(24))
+            gravity = Gravity.CENTER_HORIZONTAL
+            clipChildren = false
         }
-
-        // ヘッダ: タイトル + 状態
-        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        header.addView(label("AirPlay Mirror", 32f, Color.WHITE, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
-        statusDot = View(this)
-        header.addView(statusDot, LinearLayout.LayoutParams(dp(18), dp(18)).apply { rightMargin = dp(12) })
-        statusText = label("", 24f, Color.WHITE)
-        header.addView(statusText)
-        root.addView(header)
-
-        root.addView(label("送信先", 18f, MUTED).apply { setPadding(0, dp(24), 0, dp(8)) })
-        deviceBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        emptyHint = label("AirPlay 機器を探しています…", 22f, MUTED)
-        val devScroll = ScrollView(this).apply { isFillViewport = false; addView(deviceBox) }
-        root.addView(devScroll, LinearLayout.LayoutParams(-1, 0, 1f))
-
-        // 操作列
-        val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        toggle = button("開始", 28f) { onToggle() }
-        bar.addView(toggle, LinearLayout.LayoutParams(dp(260), dp(72)).apply { rightMargin = dp(32) })
-        bar.addView(button("−", 30f) { setVolume(MirrorState.volume - VOLUME_STEP) }, LinearLayout.LayoutParams(dp(72), dp(72)))
-        val vbox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
-        volumeText = label("", 24f, Color.WHITE).apply { gravity = Gravity.CENTER }
-        volumeBar = android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100 }
-        vbox.addView(volumeText)
-        vbox.addView(volumeBar, LinearLayout.LayoutParams(-1, dp(10)).apply { topMargin = dp(8) })
-        bar.addView(vbox, LinearLayout.LayoutParams(dp(300), -2).apply { leftMargin = dp(16); rightMargin = dp(16) })
-        bar.addView(button("＋", 30f) { setVolume(MirrorState.volume + VOLUME_STEP) }, LinearLayout.LayoutParams(dp(72), dp(72)))
-        root.addView(bar, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
-
-        // 設定列
-        val opts = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        autoBtn = button("", 20f) {
-            autoStart = !autoStart
-            prefs.edit().putBoolean("auto", autoStart).apply()
-            refresh()
+        left.addView(text("AirPlay Mirror", 22f, Palette.MUTED, bold = true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
+        orb = StatusOrb(this)
+        left.addView(orb, LinearLayout.LayoutParams(dp(300), dp(300)).apply { topMargin = dp(12) })
+        statusText = text("", 28f, Palette.TEXT, bold = true).apply { gravity = Gravity.CENTER; maxLines = 2 }
+        left.addView(statusText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        subText = text("", 17f, Palette.MUTED).apply { gravity = Gravity.CENTER; maxLines = 2 }
+        left.addView(subText, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+        left.addView(View(this), LinearLayout.LayoutParams(0, 0, 1f))
+        startBtn = TextView(this).apply {
+            gravity = Gravity.CENTER; textSize = 26f; typeface = Typeface.DEFAULT_BOLD
+            isFocusable = true; isClickable = true
+            setOnClickListener { onToggle() }
+            scaleOnFocus(1.05f)
         }
-        opts.addView(autoBtn, LinearLayout.LayoutParams(dp(340), dp(56)).apply { rightMargin = dp(16) })
-        bootBtn = button("", 20f) {
-            autoBoot = !autoBoot
-            prefs.edit().putBoolean("boot", autoBoot).apply()
-            refresh()
-        }
-        opts.addView(bootBtn, LinearLayout.LayoutParams(dp(420), dp(56)).apply { rightMargin = dp(16) })
-        logBtn = button("", 20f) { showLog = !showLog; refresh() }
-        opts.addView(logBtn, LinearLayout.LayoutParams(dp(220), dp(56)))
-        root.addView(opts, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(16) })
+        left.addView(startBtn, LinearLayout.LayoutParams(-1, dp(84)))
+        root.addView(left, LinearLayout.LayoutParams(dp(360), -1))
 
-        val opts2 = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        pauseBtn = button("", 20f) {
-            pauseNetflix = !pauseNetflix
-            prefs.edit().putBoolean("pause_netflix", pauseNetflix).apply()
-            refresh()
-        }
-        opts2.addView(pauseBtn, LinearLayout.LayoutParams(dp(560), dp(56)).apply { rightMargin = dp(16) })
-        keysBtn = button("", 20f) {
-            volKeys = !volKeys
-            prefs.edit().putBoolean("volkeys", volKeys).apply()
-            refresh()
-        }
-        opts2.addView(keysBtn, LinearLayout.LayoutParams(dp(560), dp(56)))
-        root.addView(opts2, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        // ---- 右: 送信先 / 音量 / 設定 ----
+        val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false }
 
-        logText = label("", 14f, Color.LTGRAY).apply { typeface = Typeface.MONOSPACE }
-        logScroll = ScrollView(this).apply { addView(logText); visibility = View.GONE }
-        root.addView(logScroll, LinearLayout.LayoutParams(-1, dp(150)).apply { topMargin = dp(12) })
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(text("送信先", 22f, Palette.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        deviceCount = text("", 15f, Palette.MUTED)
+        head.addView(deviceCount)
+        right.addView(head)
 
-        setContentView(root)
-        toggle.requestFocus()
+        deviceBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; setPadding(dp(6), dp(8), dp(6), dp(8)) }
+        val devScroll = ScrollView(this).apply { addView(deviceBox); clipChildren = false; clipToPadding = false; isVerticalScrollBarEnabled = false }
+        right.addView(devScroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        // 音量
+        val volHead = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        volHead.addView(text("AirPlay 音量", 20f, Palette.TEXT, bold = true), LinearLayout.LayoutParams(0, -2, 1f))
+        volumeValue = text("", 30f, Palette.TEXT, bold = true)
+        volHead.addView(volumeValue)
+        right.addView(volHead, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        volumeBar = VolumeBar(this).apply { onUserChange = { MirrorService.changeVolume(this@MainActivity, it); refresh() } }
+        right.addView(volumeBar, LinearLayout.LayoutParams(-1, dp(56)).apply { topMargin = dp(2) })
+        right.addView(text("バーを選んで ← → で調整。リモコンの音量ボタン(＋/−)でも変えられます", 14f, Palette.MUTED),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+
+        // 設定
+        right.addView(text("設定", 18f, Palette.MUTED, bold = true), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        tAuto = ToggleRow(this, "アプリを開いたら自動で開始") { setPref("auto", it) }
+        tBoot = ToggleRow(this, "電源オンで自動起動") { setPref("boot", it) }
+        tNetflix = ToggleRow(this, "Netflix 視聴中は一時停止") { setPref("pause_netflix", it) }
+        tKeys = ToggleRow(this, "音量ボタンで AirPlay 音量") { setPref("volkeys", it) }
+        val grid = LinearLayout(this).apply { clipChildren = false }
+        fun col(a: View, b: View) = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false
+            addView(a, LinearLayout.LayoutParams(-1, dp(54))); addView(b, LinearLayout.LayoutParams(-1, dp(54)).apply { topMargin = dp(8) }) }
+        grid.addView(col(tAuto, tBoot), LinearLayout.LayoutParams(0, -2, 1f).apply { rightMargin = dp(8) })
+        grid.addView(col(tNetflix, tKeys), LinearLayout.LayoutParams(0, -2, 1f).apply { leftMargin = dp(8) })
+        right.addView(grid, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+
+        logToggle = TextView(this).apply {
+            gravity = Gravity.CENTER; textSize = 15f; setTextColor(Palette.MUTED); typeface = medium()
+            background = focusableBg(cardBg(Color.TRANSPARENT, radiusDp = 12f), radiusDp = 12f)
+            isFocusable = true; isClickable = true
+            setOnClickListener { showLog = !showLog; refresh() }
+            scaleOnFocus(1.04f)
+        }
+        right.addView(logToggle, LinearLayout.LayoutParams(dp(180), dp(40)).apply { topMargin = dp(6); gravity = Gravity.END })
+        root.addView(right, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(56) })
+
+        // ログは全面に重ねて表示(普段は非表示)
+        logText = text("", 14f, Palette.TEXT).apply { typeface = Typeface.MONOSPACE; setPadding(dp(24), dp(20), dp(24), dp(20)) }
+        logScroll = ScrollView(this).apply {
+            addView(logText); visibility = View.GONE
+            background = cardBg(Color.argb(235, 9, 13, 18), Palette.SURFACE_HI, 2f, 20f)
+        }
+        val frame = FrameLayout(this)
+        frame.addView(root, FrameLayout.LayoutParams(-1, -1))
+        frame.addView(logScroll, FrameLayout.LayoutParams(-1, dp(300), Gravity.BOTTOM).apply { setMargins(dp(56), 0, dp(56), dp(110)) })
+        setContentView(frame)
+        startBtn.requestFocus()
     }
 
     private fun renderDevices() {
-        val hadFocus = deviceBox.hasFocus()
+        val focusedIdx = (0 until deviceBox.childCount).firstOrNull { deviceBox.getChildAt(it).hasFocus() }
         deviceBox.removeAllViews()
-        if (targets.isEmpty()) { deviceBox.addView(emptyHint); return }
-        targets.forEach { t ->
-            val isSel = t.serviceName == selected?.serviceName
-            val row = LinearLayout(this).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(24), 0, dp(24), 0)
-                background = focusBg(if (isSel) SELECTED else SURFACE, FOCUS)
-                isFocusable = true
-                isClickable = true
-                setOnClickListener { select(t) }
-            }
-            row.addView(label(t.displayName, 26f, Color.WHITE, bold = isSel), LinearLayout.LayoutParams(0, -2, 1f))
-            row.addView(label(t.host, 18f, MUTED).apply { setPadding(0, 0, dp(24), 0) })
-            row.addView(label(if (isSel) "● 選択中" else "", 20f, Color.WHITE))
-            deviceBox.addView(row, LinearLayout.LayoutParams(-1, dp(60)).apply { bottomMargin = dp(8) })
+        deviceCount.text = if (targets.isEmpty()) "探しています…" else "${targets.size} 台"
+        if (targets.isEmpty()) {
+            deviceBox.addView(text("AirPlay 機器を探しています…", 20f, Palette.MUTED).apply { setPadding(dp(8), dp(16), 0, 0) })
+            return
         }
-        if (hadFocus) deviceBox.getChildAt(targets.indexOfFirst { it.serviceName == selected?.serviceName }.coerceAtLeast(0))?.requestFocus()
+        targets.forEachIndexed { idx, t ->
+            val isSel = t.serviceName == selected?.serviceName
+            val card = LinearLayout(this).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(22), 0, dp(22), 0)
+                background = focusableBg(
+                    if (isSel) cardBg(Palette.SELECTED, Palette.ACCENT, 2f) else cardBg(Palette.SURFACE),
+                    focusFill = if (isSel) Palette.SELECTED else Palette.SURFACE_HI,
+                )
+                isFocusable = true; isClickable = true
+                setOnClickListener { select(t) }
+                scaleOnFocus(1.03f)
+            }
+            card.addView(text(if (isSel) "◉" else "○", 22f, if (isSel) Palette.ACCENT2 else Palette.MUTED).apply { setPadding(0, 0, dp(16), 0) })
+            card.addView(text(t.displayName, 23f, Palette.TEXT, bold = isSel), LinearLayout.LayoutParams(0, -2, 1f))
+            card.addView(text(t.host, 16f, Palette.MUTED).apply { setPadding(0, 0, dp(14), 0) })
+            if (isSel) card.addView(text("送信先", 15f, Palette.ACCENT2, bold = true))
+            deviceBox.addView(card, LinearLayout.LayoutParams(-1, dp(66)).apply { bottomMargin = dp(10) })
+        }
+        focusedIdx?.let { deviceBox.getChildAt(it.coerceAtMost(deviceBox.childCount - 1))?.requestFocus() }
     }
 
     private fun refresh() {
         val st = MirrorState.status
-        val color = when (st) {
-            MirrorState.Status.STREAMING -> GREEN
-            MirrorState.Status.CONNECTING -> AMBER
-            MirrorState.Status.PAUSED -> BLUE
-            MirrorState.Status.ERROR -> RED
-            MirrorState.Status.IDLE -> MUTED
+        orb.state = when (st) {
+            MirrorState.Status.IDLE -> StatusOrb.State.IDLE
+            MirrorState.Status.CONNECTING -> StatusOrb.State.CONNECTING
+            MirrorState.Status.STREAMING -> StatusOrb.State.STREAMING
+            MirrorState.Status.PAUSED -> StatusOrb.State.PAUSED
+            MirrorState.Status.ERROR -> StatusOrb.State.ERROR
         }
-        statusDot.background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color) }
-        statusText.text = MirrorState.detail
+        statusText.text = MirrorState.detail.ifBlank { "停止中" }
+        subText.text = when {
+            MirrorState.running && st == MirrorState.Status.STREAMING -> "遅延 約200ms ・ AirPlay 音量 ${MirrorState.volume}"
+            MirrorState.running && st == MirrorState.Status.PAUSED -> "別のアプリに戻ると自動で再開します"
+            selected == null -> "右の一覧から送信先を選んでください"
+            else -> "「${selected!!.displayName}」へ送信できます"
+        }
 
-        toggle.text = if (MirrorState.running) "■  停止" else "▶  開始"
-        toggle.isEnabled = MirrorState.running || selected != null
-        toggle.alpha = if (toggle.isEnabled) 1f else 0.45f
-        volumeText.text = "AirPlay 音量  ${MirrorState.volume} / 100"
-        volumeBar.progress = MirrorState.volume
-        autoBtn.text = "アプリ起動時に自動開始: " + if (autoStart) "オン" else "オフ"
-        bootBtn.text = "電源オン時に自動起動: " + if (autoBoot) "オン" else "オフ"
-        keysBtn.text = "リモコンの音量ボタンで AirPlay 音量: " + if (volKeys) "オン" else "オフ"
-        pauseBtn.text = "Netflix 視聴中は自動で一時停止: " + if (pauseNetflix) "オン" else "オフ"
-        logBtn.text = if (showLog) "ログを隠す" else "ログを表示"
+        val running = MirrorState.running
+        startBtn.text = if (running) "■  停止" else "▶  開始"
+        startBtn.setTextColor(if (running) Palette.TEXT else Color.WHITE)
+        val canStart = running || selected != null
+        startBtn.alpha = if (canStart) 1f else 0.4f
+        startBtn.isEnabled = canStart
+        val normal = if (running) cardBg(Palette.SURFACE, Palette.RED, 2.5f, 26f)
+        else GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(Palette.ACCENT, Palette.ACCENT2)).apply { cornerRadius = dp(26f) }
+        startBtn.background = focusableBg(normal, focusFill = if (running) Palette.SURFACE_HI else Palette.ACCENT, radiusDp = 26f)
+
+        volumeValue.text = "${MirrorState.volume}"
+        volumeBar.value = MirrorState.volume
+        tAuto.checked = prefs.getBoolean("auto", true)
+        tBoot.checked = prefs.getBoolean("boot", true)
+        tNetflix.checked = prefs.getBoolean("pause_netflix", true)
+        tKeys.checked = prefs.getBoolean("volkeys", true)
+        logToggle.text = if (showLog) "ログを隠す" else "ログを表示"
         logScroll.visibility = if (showLog) View.VISIBLE else View.GONE
         if (showLog) {
             logText.text = MirrorState.text()
@@ -271,42 +296,8 @@ class MainActivity : Activity() {
         }
     }
 
-    // ---- 部品 ----
-
-    private fun label(text: String, sp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
-        this.text = text; textSize = sp; setTextColor(color)
-        if (bold) typeface = Typeface.DEFAULT_BOLD
-    }
-
-    private fun button(text: String, sp: Float, onClick: () -> Unit) = Button(this).apply {
-        this.text = text; textSize = sp; setTextColor(Color.WHITE); isAllCaps = false
-        background = focusBg(SURFACE, FOCUS)
-        stateListAnimator = null
-        setOnClickListener { onClick() }
-    }
-
-    /** 通常は暗い面、フォーカス時は青 + 白枠で、離れた距離でも今どこを選んでいるか分かるようにする。 */
-    private fun focusBg(normal: Int, focus: Int): StateListDrawable {
-        fun shape(fill: Int, stroke: Int, w: Int) = GradientDrawable().apply {
-            cornerRadius = dp(14).toFloat(); setColor(fill); setStroke(w, stroke)
-        }
-        return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_focused), shape(focus, Color.WHITE, dp(3)))
-            addState(intArrayOf(android.R.attr.state_pressed), shape(focus, Color.WHITE, dp(3)))
-            addState(intArrayOf(), shape(normal, Color.TRANSPARENT, 0))
-        }
-    }
-
-    companion object {
-        private const val VOLUME_STEP = 5
-        private val BG = Color.parseColor("#0E1217")
-        private val SURFACE = Color.parseColor("#1F2630")
-        private val SELECTED = Color.parseColor("#1D3B63")
-        private val FOCUS = Color.parseColor("#2F6FEB")
-        private val MUTED = Color.parseColor("#8B97A6")
-        private val GREEN = Color.parseColor("#3DDC84")
-        private val AMBER = Color.parseColor("#FFB020")
-        private val RED = Color.parseColor("#FF5252")
-        private val BLUE = Color.parseColor("#5AA9FF")
+    private fun text(s: String, sp: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+        text = s; textSize = sp; setTextColor(color)
+        typeface = if (bold) Typeface.create("sans-serif-medium", Typeface.BOLD) else medium()
     }
 }
