@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 770" width="1240" height="770" role="img" aria-labelledby="t d" font-family="-apple-system,BlinkMacSystemFont,'Hiragino Sans','Noto Sans CJK JP','Yu Gothic',sans-serif">
+<title id="t">AirPlay Bridge システム構成図</title>
+<desc id="d">プロジェクターの音声を Bluetooth で Raspberry Pi が受け、AirPlay で AirMac Express へ送る。Pi は遅延をプロジェクターへ申告し、映像を遅らせて音と合わせる。</desc>
+<style>
+:root{--bg:#fff;--panel:#f6f7f9;--line:#d5d9e0;--box:#fff;--text:#1b2230;--sub:#5d6778;--audio:#0b7a75;--audio-bg:#e4f4f2;--ctl:#7a4fd0;--pill:#fff}
+@media (prefers-color-scheme:dark){:root{--bg:#0f141c;--panel:#171e29;--line:#333d4d;--box:#1f2835;--text:#ebeff5;--sub:#a3aebe;--audio:#3fd0c6;--audio-bg:#143532;--ctl:#b598ff;--pill:#0f141c}}
+.bg{fill:var(--bg)}.panel{fill:var(--panel);stroke:var(--line)}.box{fill:var(--box);stroke:var(--line);stroke-width:1.2}.abox{fill:var(--audio-bg);stroke:var(--audio);stroke-width:1.4}
+.ct{fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:2 3}
+text{fill:var(--text)}.h1{font-size:24px;font-weight:700}.lead{font-size:14px;fill:var(--sub)}.ph{font-size:15px;font-weight:700}.ps{font-size:12px;fill:var(--sub)}
+.bt{font-size:14px;font-weight:600}.bs{font-size:12px;fill:var(--sub)}.la{font-size:12px;font-weight:600;fill:var(--audio)}.lc{font-size:12px;fill:var(--ctl)}.pill{fill:var(--pill)}
+.a{fill:none;stroke:var(--audio);stroke-width:3}.c{fill:none;stroke:var(--ctl);stroke-width:1.6;stroke-dasharray:6 4}.ah{fill:var(--audio)}.ch{fill:var(--ctl)}.m{text-anchor:middle}
+</style>
+<defs>
+<marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="4.5" markerHeight="4.5" orient="auto-start-reverse"><path class="ah" d="M0 0L10 5L0 10z"/></marker>
+<marker id="mc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ch" d="M0 0L10 5L0 10z"/></marker>
+</defs>
+<rect class="bg" width="1240" height="770"/>
+<text class="h1" x="24" y="40">AirPlay Bridge システム構成</text>
+<text class="lead" x="24" y="64">プロジェクターの音を Bluetooth で受け、AirPlay でスピーカーへ送る。音の遅れを申告して、映像と合わせる。</text>
+
+<rect class="panel" x="20" y="84" width="270" height="550" rx="12"/>
+<text class="ph" x="42" y="111">プロジェクター</text><text class="ps" x="150" y="111">Google TV</text>
+<rect class="panel" x="380" y="84" width="490" height="550" rx="12"/>
+<text class="ph" x="402" y="111">Raspberry Pi</text><text class="ps" x="505" y="111">有線 LAN・Homebridge と同居</text>
+<rect class="panel" x="960" y="84" width="260" height="550" rx="12"/>
+<text class="ph" x="982" y="111">宅内 LAN の機器</text>
+
+<!-- プロジェクター -->
+<rect class="abox" x="45" y="130" width="220" height="60" rx="8"/>
+<text class="bt m" x="155" y="155">Netflix / YouTube など</text><text class="bs m" x="155" y="175">アプリの音をそのまま使う</text>
+<rect class="abox" x="45" y="225" width="220" height="60" rx="8"/>
+<text class="bt m" x="155" y="250">Bluetooth 音声出力</text><text class="bs m" x="155" y="270">A2DP ソース</text>
+<rect class="box" x="45" y="430" width="220" height="60" rx="8"/>
+<text class="bt m" x="155" y="455">映像の投影</text><text class="bs m" x="155" y="475">申告された分だけ遅らせる</text>
+<rect class="box" x="45" y="540" width="220" height="60" rx="8"/>
+<text class="bt m" x="155" y="565">リモコンの音量 ±</text><text class="bs m" x="155" y="585">Bluetooth の絶対音量</text>
+
+<!-- Pi -->
+<rect class="abox" x="405" y="225" width="135" height="60" rx="8"/>
+<text class="bt m" x="472" y="250">BlueZ</text><text class="bs m" x="472" y="270">+ BlueALSA</text>
+<rect class="ct" x="565" y="122" width="285" height="255" rx="10"/>
+<text class="ps" x="580" y="142">送信エンジン(C)</text>
+<rect class="abox" x="582" y="152" width="250" height="55" rx="8"/>
+<text class="bt m" x="707" y="175">受信・リングバッファ</text><text class="bs m" x="707" y="194">ALSA から取得、目標 120ms</text>
+<rect class="abox" x="582" y="228" width="250" height="55" rx="8"/>
+<text class="bt m" x="707" y="251">可変レート変換</text><text class="bs m" x="707" y="270">libsamplerate で時計のずれを吸収</text>
+<rect class="abox" x="582" y="304" width="250" height="55" rx="8"/>
+<text class="bt m" x="707" y="327">AirPlay 送信</text><text class="bs m" x="707" y="346">libraop(AirPlay 遅延 600ms)</text>
+<rect class="box" x="405" y="445" width="445" height="115" rx="8"/>
+<text class="bt m" x="627" y="472">管理デーモン(Python)</text>
+<text class="bs m" x="627" y="496">Bluetooth の接続を監視して、エンジンを起動・停止</text>
+<text class="bs m" x="627" y="516">音量と遅延の申告を管理 / 設定を保存</text>
+<text class="bs m" x="627" y="536">Web 画面と API(ポート 8590)</text>
+<text class="ps m" x="627" y="598">systemd で自動起動・権限を最小化</text>
+
+<!-- 宅内 -->
+<rect class="abox" x="985" y="301" width="210" height="60" rx="8"/>
+<text class="bt m" x="1090" y="326">AirMac Express</text><text class="bs m" x="1090" y="346">AirPlay 1(RAOP)受信</text>
+<rect class="abox" x="985" y="405" width="210" height="50" rx="8"/><text class="bt m" x="1090" y="436">スピーカー</text>
+<rect class="box" x="985" y="490" width="210" height="60" rx="8"/>
+<text class="bt m" x="1090" y="515">ブラウザ・スマホ</text><text class="bs m" x="1090" y="535">管理 Web 画面</text>
+
+<!-- 音声 -->
+<path class="a" marker-end="url(#ma)" d="M155 190V223"/>
+<path class="a" marker-end="url(#ma)" d="M265 255H403"/>
+<path class="a" marker-end="url(#ma)" d="M540 255H553V180H580"/>
+<path class="a" marker-end="url(#ma)" d="M707 207V226"/>
+<path class="a" marker-end="url(#ma)" d="M707 283V302"/>
+<path class="a" marker-end="url(#ma)" d="M832 331H983"/>
+<path class="a" marker-end="url(#ma)" d="M1090 361V403"/>
+<rect class="pill" x="282" y="205" width="106" height="40" rx="5"/>
+<text class="la m" x="335" y="221">Bluetooth A2DP</text><text class="la m" x="335" y="238">AAC 44.1kHz</text>
+<rect class="pill" x="866" y="282" width="98" height="40" rx="5"/>
+<text class="la m" x="915" y="298">AirPlay 1</text><text class="la m" x="915" y="315">ポート 7000</text>
+
+<!-- 制御 -->
+<path class="c" marker-end="url(#mc)" d="M472 445V287"/>
+<rect class="pill" x="478" y="340" width="78" height="40" rx="5"/>
+<text class="lc" x="482" y="356">遅延の申告</text><text class="lc" x="482" y="373">(約 750ms)</text>
+<path class="c" marker-end="url(#mc)" d="M405 272H320V460H267"/>
+<rect class="pill" x="284" y="350" width="74" height="40" rx="5"/>
+<text class="lc m" x="321" y="366">遅延を通知</text><text class="lc m" x="321" y="383">AVDTP</text>
+<path class="c" marker-start="url(#mc)" marker-end="url(#mc)" d="M267 570H345V505H403"/>
+<text class="lc m" x="335" y="592">AVRCP 音量</text><text class="lc m" x="335" y="609">0〜127 ↔ 0〜100</text>
+<path class="c" marker-end="url(#mc)" d="M660 445V379"/>
+<text class="lc" x="652" y="416" text-anchor="end">起動・停止・音量</text>
+<path class="c" marker-end="url(#mc)" d="M760 379V443"/>
+<text class="lc" x="768" y="416">状態</text>
+<path class="c" marker-start="url(#mc)" marker-end="url(#mc)" d="M852 520H983"/>
+<rect class="pill" x="866" y="534" width="98" height="40" rx="5"/>
+<text class="lc m" x="915" y="550">HTTP :8590</text><text class="lc m" x="915" y="567">宅内 LAN のみ</text>
+
+<!-- 凡例と注記 -->
+<path class="a" d="M24 668H68"/><text class="bs" x="76" y="672">音声</text>
+<path class="c" d="M124 668H168"/><text class="bs" x="176" y="672">制御・状態</text>
+<text class="bt" x="24" y="710">映像と音の合わせ方</text>
+<text class="bs" x="24" y="733">音の遅れ 約 750ms = AirPlay 600ms + バッファ 120ms + 補正 30ms(既定値)。この値を Bluetooth でプロジェクターへ申告し、映像も同じだけ遅らせます。</text>
+<text class="bs" x="24" y="753">補正値と AirPlay 遅延は Web 画面で変更できます。</text>
+</svg>

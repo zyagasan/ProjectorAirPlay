@@ -136,7 +136,7 @@ Raspberry Pi で動作と音質・遅延を確定させてから検討する。
 |---|---|
 | Bluetooth 受信 | **BlueALSA master(v5 系)をソースからビルド**(`--enable-aac`、fdk-aac)。Debian の 4.3.1 は AAC 非対応で、遅延の申告も BlueZ に伝えないため。`/etc/systemd/system/bluealsad.service`(`-p a2dp-sink -c SBC -c AAC --a2dp-force-audio-cd`) |
 | 送信エンジン | `bridge/engine/airplay_bridge_engine.c`。ALSA で受信 → リングバッファ → libsamplerate の可変レート変換で時計のずれを吸収 → libraop。CPU 約 20%(cliraop は空回りで 93%) |
-| 管理 Web | `bridge/controller/`(Python 標準ライブラリのみ)。`http://raspberrypi.local:8590/` |
+| 管理 Web | `bridge/controller/`(Python 標準ライブラリのみ)。`http://<Pi のホスト名>.local:8590/` |
 | 自動起動 | `airplay-bridge.service`(systemd) |
 
 確認できたこと:

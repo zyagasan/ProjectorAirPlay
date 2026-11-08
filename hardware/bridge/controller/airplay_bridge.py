@@ -6,16 +6,21 @@
   BlueZ がこれをプロジェクターへ申告し、プロジェクターが映像を遅らせて音と合わせる。
 - 音量: Web 画面のスライダー、またはプロジェクターのリモコン(Bluetooth の絶対音量)で AirPlay 音量 0〜100 を変える。
 - Web 画面: http://<Pi>:8590/
+
+Web 画面に認証はない。信頼できる宅内 LAN だけで使い、インターネットへ公開しないこと(SECURITY.md)。
 """
+import ipaddress
 import json
 import os
 import re
+import socket
 import subprocess
 import threading
 import time
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve().parent
 BASE = HERE.parent.parent                     # ~/airplay-bridge
@@ -25,9 +30,14 @@ RUN = Path(os.environ.get("RUNTIME_DIRECTORY", "/tmp/airplay-bridge"))
 CTL = RUN / "ctl"
 STATUS = RUN / "status.json"
 PORT = int(os.environ.get("AIRPLAY_BRIDGE_PORT", "8590"))
+BIND = os.environ.get("AIRPLAY_BRIDGE_BIND", "0.0.0.0")
+# 名前で開くときに追加で許可するホスト名(カンマ区切り)
+EXTRA_HOSTS = {h.strip().lower() for h in os.environ.get("AIRPLAY_BRIDGE_ALLOWED_HOSTS", "").split(",") if h.strip()}
+MAX_BODY = 16 * 1024
+PAIRING_SECONDS = 180
 
 DEFAULTS = {
-    "target": {"name": "メインスピーカー", "host": "192.0.2.10", "port": 7000, "et": "0,4"},
+    "target": {"name": "", "host": "", "port": 7000, "et": "0,4"},   # Web 画面で選ぶ
     "volume": 40,
     "latency_ms": 600,        # AirPlay 側の遅延(大きいほど途切れに強い)
     "buffer_ms": 120,         # エンジン内の溜め(時計のずれを吸収する量)
@@ -122,6 +132,7 @@ class Bridge:
         self.last_bt_vol = None
         self.expect_bt_vol = None
         self.restart_requested = False
+        self.waiting_target_logged = False
 
     def start_engine(self):
         RUN.mkdir(parents=True, exist_ok=True)
@@ -194,6 +205,12 @@ class Bridge:
         if self.restart_requested:
             self.restart_requested = False
             self.stop_engine()
+        if not cfg["target"].get("host"):
+            if not self.waiting_target_logged:
+                log("送信先が未設定です。Web 画面で選んでください")
+                self.waiting_target_logged = True
+            return
+        self.waiting_target_logged = False
         if self.proc is None or self.proc.poll() is not None:
             if self.proc is not None:
                 log("エンジンが終了したので再起動します")
@@ -209,12 +226,16 @@ class Bridge:
             self.expect_bt_vol = None
 
     def loop(self):
+        count = 0
         while True:
             try:
                 with lock:
                     self.tick()
+                    if count % 60 == 0:   # 30 秒ごと。bluetoothd が再起動して戻っていても閉じ直す
+                        pairing.enforce()
             except Exception as e:  # noqa: BLE001
                 log(f"エラー: {e}")
+            count += 1
             time.sleep(0.5)
 
     def status(self):
@@ -237,6 +258,32 @@ class Bridge:
 bridge = Bridge()
 
 
+# ---------------------------------------------------------------- Bluetooth のペアリング受付
+# bt-agent は確認なし(NoInputNoOutput)で応答するので、受付を開けたままだと近くの誰でも
+# ペアリングできてしまう。ふだんは閉じ、Web 画面で押したときだけ開く。
+
+class Pairing:
+    def __init__(self):
+        self.until = 0.0
+
+    def is_open(self):
+        return time.monotonic() < self.until
+
+    def open(self):
+        self.until = time.monotonic() + PAIRING_SECONDS
+        run(["bluetoothctl", "pairable", "on"])
+        run(["bluetoothctl", "discoverable-timeout", str(PAIRING_SECONDS)])
+        run(["bluetoothctl", "discoverable", "on"])
+
+    def enforce(self):
+        if not self.is_open():
+            run(["bluetoothctl", "discoverable", "off"])
+            run(["bluetoothctl", "pairable", "off"])
+
+
+pairing = Pairing()
+
+
 # ---------------------------------------------------------------- AirPlay 機器の検出
 
 def decode_avahi(s):
@@ -244,7 +291,19 @@ def decode_avahi(s):
     return raw.decode("utf-8", "replace")
 
 
+discover_cache = (0.0, [])
+discover_lock = threading.Lock()
+
+
 def discover():
+    global discover_cache
+    with discover_lock:      # avahi-browse を同時にいくつも起動させない
+        if time.monotonic() - discover_cache[0] > 5:
+            discover_cache = (time.monotonic(), browse_raop())
+        return discover_cache[1]
+
+
+def browse_raop():
     found = {}
     for line in run(["avahi-browse", "-rpt", "_raop._tcp"], timeout=8).splitlines():
         p = line.split(";")
@@ -264,9 +323,67 @@ def discover():
 
 # ---------------------------------------------------------------- Web
 
+def parse_ip(host):
+    try:
+        return ipaddress.ip_address(host)
+    except ValueError:
+        return None
+
+
+def host_allowed(header):
+    """DNS リバインディング対策: Host が IP か、この Pi 自身の名前のときだけ受け付ける。"""
+    host = urlsplit("//" + (header or "")).hostname
+    if not host:
+        return False
+    host = host.lower()
+    if parse_ip(host):
+        return True
+    me = socket.gethostname().lower()
+    return (host in ("localhost", me) or host in EXTRA_HOSTS
+            or re.fullmatch(re.escape(me) + r"(-\d+)?\.local", host) is not None
+            or re.fullmatch(re.escape(me) + r"\.[a-z0-9-]+\.ts\.net", host) is not None)
+
+
+def clean_target(data):
+    """送信先の検証。音声を外部へ送らせないよう、宅内のアドレスだけ受け付ける。"""
+    name = data["name"]
+    if not isinstance(name, str) or not 0 < len(name) <= 128 or not name.isprintable():
+        raise ValueError("name")
+    ip = parse_ip(data["host"]) if isinstance(data["host"], str) else None
+    if ip is None or not ip.is_private or ip.is_loopback or ip.is_unspecified or ip.is_multicast:
+        raise ValueError("host")
+    port = int(data["port"])
+    if not 0 < port < 65536:
+        raise ValueError("port")
+    et = data["et"]
+    if not isinstance(et, str) or not re.fullmatch(r"\d{1,2}(,\d{1,2}){0,15}", et):
+        raise ValueError("et")
+    return {"name": name, "host": str(ip), "port": port, "et": et}
+
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                               "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; "
+                               "frame-ancestors 'none'",
+}
+
+
 class Handler(BaseHTTPRequestHandler):
+    server_version = "AirPlayBridge"
+    sys_version = ""
+    timeout = 10
+
     def log_message(self, *a):
         pass
+
+    def end_headers(self):
+        for k, v in SECURITY_HEADERS.items():
+            self.send_header(k, v)
+        super().end_headers()
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode()
@@ -276,7 +393,21 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _trusted_request(self):
+        """ほかのサイトを開いたブラウザ経由の操作(CSRF / DNS リバインディング)を拒否する。"""
+        if not host_allowed(self.headers.get("Host")):
+            return False
+        if self.command != "POST":
+            return True
+        origin = self.headers.get("Origin")
+        if origin and urlsplit(origin).netloc.lower() != (self.headers.get("Host") or "").lower():
+            return False
+        # application/json は他サイトからだと事前確認が必要になり、それに応答しないので送れない
+        return (self.headers.get("Content-Type") or "").split(";")[0].strip().lower() == "application/json"
+
     def do_GET(self):
+        if not self._trusted_request():
+            return self._json({"error": "forbidden"}, 403)
         if self.path in ("/", "/index.html"):
             body = (HERE / "index.html").read_bytes()
             self.send_response(200)
@@ -293,11 +424,23 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "not found"}, 404)
 
     def do_POST(self):
-        n = int(self.headers.get("Content-Length") or 0)
+        if not self._trusted_request():
+            return self._json({"error": "forbidden"}, 403)
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._json({"error": "bad length"}, 400)
+        if not 0 <= n <= MAX_BODY:
+            return self._json({"error": "too large"}, 413)
         try:
             data = json.loads(self.rfile.read(n) or b"{}")
-        except json.JSONDecodeError:
-            return self._json({"error": "bad json"}, 400)
+            if not isinstance(data, dict):
+                raise ValueError("object required")
+            return self._route(data)
+        except (ValueError, KeyError, TypeError, OverflowError):
+            return self._json({"error": "bad request"}, 400)
+
+    def _route(self, data):
         with lock:
             if self.path == "/api/volume":
                 return self._json({"volume": bridge.set_volume(data["volume"])})
@@ -315,33 +458,32 @@ class Handler(BaseHTTPRequestHandler):
                 log(f"AirPlay 遅延を {cfg['latency_ms']}ms に変更(再接続します)")
                 return self._json({"ok": True})
             if self.path == "/api/target":
-                cfg["target"] = {k: data[k] for k in ("name", "host", "port", "et")}
+                cfg["target"] = clean_target(data)
                 save_config()
                 bridge.restart_requested = True
-                log(f"送信先を {data['name']} に変更")
+                log(f"送信先を {cfg['target']['name']} に変更")
                 return self._json({"ok": True})
             if self.path == "/api/link":
                 cfg["link_remote_volume"] = bool(data["enabled"])
                 save_config()
                 return self._json({"ok": True})
             if self.path == "/api/pairing":
-                run(["bluetoothctl", "discoverable-timeout", "180"])
-                run(["bluetoothctl", "discoverable", "on"])
-                log("ペアリング受付を開始(3分間)")
+                pairing.open()
+                log(f"ペアリング受付を開始({PAIRING_SECONDS // 60}分間)")
                 return self._json({"ok": True})
             if self.path == "/api/restart":
                 bridge.restart_requested = True
                 log("再接続を要求")
                 return self._json({"ok": True})
-        self._json({"error": "not found"}, 404)
+        return self._json({"error": "not found"}, 404)
 
 
 def main():
     RUN.mkdir(parents=True, exist_ok=True)
     save_config()
-    log(f"AirPlay Bridge 起動(Web: http://0.0.0.0:{PORT}/)")
+    log(f"AirPlay Bridge 起動(Web: http://{BIND}:{PORT}/)")
     threading.Thread(target=bridge.loop, daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    ThreadingHTTPServer((BIND, PORT), Handler).serve_forever()
 
 
 if __name__ == "__main__":

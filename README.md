@@ -1,7 +1,46 @@
 # ProjectorAirPlay
 
-Google TV 内蔵プロジェクター(FORMOVIE / Xiaomi L1 Pro, C045RGN, Android 14)の音声出力を、
-AirPlay 1(RAOP)機器(AirMac Express「メインスピーカー」)へ飛ばすアプリ。
+Google TV プロジェクターの音を、AirPlay 1(RAOP)対応のスピーカーへ飛ばすプロジェクトです。
+Raspberry Pi が Bluetooth で音を受けて AirPlay へ送るので、Netflix のような DRM のあるアプリでも使えます。
+
+![システム構成図](docs/system-diagram.svg)
+
+## 特長
+- **アプリを選ばない**: プロジェクターから見ると普通の Bluetooth スピーカーです。
+- **映像と音が合う**: 音の遅れを Bluetooth で申告し、プロジェクターが映像を同じだけ遅らせます。
+- **途切れにくい**: バッファと可変レート変換で、Bluetooth と AirPlay の時計のずれを吸収します。
+- **操作しやすい**: Web 画面から音量、ずれ補正、送信先を変更できます。リモコンの音量ボタンとも連動します。
+
+## 動作確認した環境
+| 機器 | 内容 |
+|---|---|
+| プロジェクター | FORMOVIE / Xiaomi L1 Pro(C045RGN、Android 14) |
+| 中継機 | Raspberry Pi 3 Model B+(Debian 13、有線 LAN) |
+| 受信機 | AirMac Express(AirPlay 1) |
+
+## 導入
+BlueALSA のビルドや Bluetooth の設定が先に必要です。手順と注意点は [hardware/DESIGN.md](hardware/DESIGN.md) を参照してください。
+準備ができたら、Pi 上で次を実行します。
+
+```bash
+~/airplay-bridge/bridge/install.sh
+```
+
+`http://<Pi のホスト名>.local:8590/` を開き、送信先を選びます。プロジェクターをつなぐときは、
+Web 画面の「ペアリング」を押すと 3 分間だけ受付を開きます。
+
+## セキュリティ
+Web 画面に認証はありません。信頼できる宅内 LAN だけで使い、インターネットへ公開しないでください。
+詳しくは [SECURITY.md](SECURITY.md) を参照してください。
+
+## ライセンス
+同梱・利用しているソフトウェアは [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+
+---
+
+# 開発の記録
+
+ここから下は、Bluetooth 方式に移る前の検証記録です。
 
 ## 方式
 shell 権限(uid 2000)のプロセスが `CAPTURE_AUDIO_OUTPUT` を使って `REMOTE_SUBMIX` で再生音を録音し、
@@ -45,7 +84,7 @@ shell 権限(uid 2000)のプロセスが `CAPTURE_AUDIO_OUTPUT` を使って `RE
 Mac 経由より遅延が減ったことを確認した。詳細は [android/README.md](android/README.md)。
 
 ## 外部デバイス方式(2026-11-07〜)
-アプリ方式は Netflix と両立できないため、Bluetooth で音を受けて AirPlay へ送る外部デバイス(Raspberry Pi)方式を設計中。
+アプリ方式は Netflix と両立できないため、Bluetooth で音を受けて AirPlay へ送る外部デバイス(Raspberry Pi)方式を作成した。
 [hardware/DESIGN.md](hardware/DESIGN.md)
 
 ## 次のステップ
@@ -55,7 +94,6 @@ Mac 経由より遅延が減ったことを確認した。詳細は [android/REA
 
 ## 検証コマンド
 ```
-export ADB="/Applications/platform-tools 2/adb"
 scrcpy --no-video --no-playback --audio-source=output --audio-codec=raw --time-limit=10 --record=cap.wav
 ffmpeg -i cap.wav -af volumedetect -f null -
 ```

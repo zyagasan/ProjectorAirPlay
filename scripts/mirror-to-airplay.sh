@@ -1,8 +1,8 @@
 #!/bin/bash
 # プロジェクターの再生音を scrcpy で取得し、AirMac Express へ RAOP で送る(Mac 経由の動作確認用)。
-# 使い方: mirror-to-airplay.sh [秒数(既定 30)] [AirPlay機器IP]
-SEC=${1:-30}; IP=${2:-192.0.2.10}
-export ADB="/Applications/platform-tools 2/adb"
+# 使い方: mirror-to-airplay.sh <秒数> <AirPlay機器IP>
+SEC=${1:-30}; IP=${2:?AirPlay 機器の IP を指定してください}
+export ADB="${ADB:-adb}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
 FIFO=$(mktemp -u /tmp/capfifo.XXXXXX); mkfifo "$FIFO"
 trap 'kill $(jobs -p) 2>/dev/null; rm -f "$FIFO"' EXIT

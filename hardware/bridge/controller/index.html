@@ -241,7 +241,7 @@ async function refresh() {
   $("btSub").textContent = bt.connected ? (bt.playing ? "再生中" : "接続中") : "Bluetooth 待ち";
   $("codec").textContent = bt.codec ? `Bluetooth ${bt.codec}` : "Bluetooth";
   $("piSub").textContent = streaming ? `遅延 ${e.latency_ms}ms` : "待機中";
-  $("spName").textContent = c.target.name; $("spSub").textContent = c.target.host;
+  $("spName").textContent = c.target.name || "未設定"; $("spSub").textContent = c.target.host || "下の送信先から選んでください";
   $("headline").textContent = !bt.connected ? "プロジェクターの Bluetooth 接続を待っています"
     : streaming ? `${c.target.name} で再生中` : `${c.target.name} に接続しています…`;
   $("subline").textContent = streaming ? `映像は ${s.sync_ms}ms 遅らせて音と合わせています` : "";
